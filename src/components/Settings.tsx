@@ -66,14 +66,18 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         });
 
         p2pMesh.onSignal((signal) => {
-            addLog(`Signal Generated: ${signal.length} chars`);
+            const isOffer = signal.startsWith('1') || p2pMesh.expandSignal(signal)?.type === 'offer';
+            addLog(`Signal Ready: ${isOffer ? 'OFFER' : 'ANSWER'} (${signal.length}c)`);
             setActiveSignal(signal);
-            if (stateRef.current === 'GENERATING') {
+
+            // Permissive state check: If we have an answer, show it regardless if we just started processing
+            if (isOffer) {
                 setState('SHOWING_OFFER');
                 setShowModal(true);
-            } else if (stateRef.current === 'PROCESSING_SCAN') {
+            } else {
                 setState('SHOWING_ANSWER');
                 setShowModal(true);
+                setStatusMessage('Response Generated');
             }
         });
 
@@ -122,11 +126,15 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
             if (stateRef.current === 'IDLE' || stateRef.current === 'PROCESSING_SCAN') {
                 if (signal.type !== 'offer') { setScanError('Scan Initiator Offer first'); return; }
-                addLog('Processing Offer...');
+                addLog('Offer Received. Generating Answer...');
+
+                // CRITICAL: Set state IMMEDIATELY before starting the peer
                 setState('PROCESSING_SCAN');
                 setStatusMessage('Generating Response...');
                 stopScanning();
-                p2pMesh.receiveConnection(signal);
+
+                // Small delay to ensure React state reflects before potential sync callback
+                setTimeout(() => p2pMesh.receiveConnection(signal), 50);
             } else if (stateRef.current === 'SCANNING_ANSWER' || stateRef.current === 'SHOWING_OFFER') {
                 if (signal.type !== 'answer') { setScanError('Scan Peer Response now'); return; }
                 addLog('Processing Answer...');
