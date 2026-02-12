@@ -114,12 +114,49 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
     const handleAcceptConnection = () => {
         if (pendingOffer) {
-            p2pMesh.receiveConnection(pendingOffer);
-            setConnectionStage('showing-answer');
-            setPendingOffer(null);
-            setShowQr(true); // Show the answer QR
+            try {
+                p2pMesh.receiveConnection(pendingOffer);
+                setConnectionStage('showing-answer');
+                setPendingOffer(null);
+                setShowQr(true); // Show the answer QR
+            } catch (err) {
+                console.error("Connection acceptance failed:", err);
+                alert("Failed to accept connection. The QR code might be invalid or expired.");
+                setConnectionStage('idle');
+                setPendingOffer(null);
+            }
         }
     };
+
+    // ...
+
+    {
+        isCameraBlocked && (
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-900/90 backdrop-blur-sm z-20">
+                <div className="p-8 text-center space-y-4">
+                    <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto text-red-500">
+                        <Camera className="w-8 h-8" />
+                    </div>
+                    <div className="space-y-1">
+                        <p className="font-bold text-red-400">Camera Access Blocked</p>
+                        <p className="text-xs text-slate-500 leading-relaxed px-4">
+                            Please check browser permissions.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => {
+                            setIsCameraBlocked(false);
+                            setShowScanner(false);
+                            setTimeout(() => setShowScanner(true), 100);
+                        }}
+                        className="px-6 py-2 bg-red-500/10 text-red-400 text-xs font-bold uppercase tracking-wider rounded-xl border border-red-500/20 hover:bg-red-500/20 transition-colors"
+                    >
+                        Retry Access
+                    </button>
+                </div>
+            </div>
+        )
+    }
 
     const handleDenyConnection = () => {
         setPendingOffer(null);
@@ -483,9 +520,19 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                                         <div className="space-y-1">
                                             <p className="font-bold text-red-400">Camera Access Blocked</p>
                                             <p className="text-xs text-slate-500 leading-relaxed px-4">
-                                                Browsers block camera on local IPs. Use "Upload QR Photo" below.
+                                                Please check browser permissions.
                                             </p>
                                         </div>
+                                        <button
+                                            onClick={() => {
+                                                setIsCameraBlocked(false);
+                                                setShowScanner(false);
+                                                setTimeout(() => setShowScanner(true), 100);
+                                            }}
+                                            className="px-6 py-2 bg-red-500/10 text-red-400 text-xs font-bold uppercase tracking-wider rounded-xl border border-red-500/20 hover:bg-red-500/20 transition-colors"
+                                        >
+                                            Retry Access
+                                        </button>
                                     </div>
                                 </div>
                             )}
