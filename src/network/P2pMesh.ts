@@ -10,7 +10,8 @@ export class P2pMesh {
     private onSignalCallback: ((signal: any) => void) | null = null;
     private lastSignal: any = null;
     private onPeerCountChange: ((count: number) => void) | null = null;
-    private savedPeers: Map<string, any> = new Map(); // Store peer signals for reconnection
+    private onPeerErrorCallback: ((err: string) => void) | null = null;
+    private savedPeers: Map<string, any> = new Map();
     private broadcastChannel: BroadcastChannel;
     public myId: string;
     private pendingInitiator: any = null; // Track the peer waiting for an answer
@@ -130,6 +131,11 @@ export class P2pMesh {
         const peer = new SimplePeer({
             initiator,
             trickle: false,
+            config: {
+                iceServers: [], // Disable STUN to prevent pairing delays/stalls when offline
+                iceTransportPolicy: 'all',
+                iceCandidatePoolSize: 10
+            }
         });
 
         // Use remotePeerId if provided (auto-discovery), otherwise generate temp ID (QR scan)
@@ -184,7 +190,9 @@ export class P2pMesh {
         });
 
         peer.on('error', (err: any) => {
-            console.error(`[P2pMesh] Peer error (${peerId}):`, err);
+            const errMsg = err.message || JSON.stringify(err);
+            console.error(`[P2pMesh] Peer error (${peerId}):`, errMsg);
+            if (this.onPeerErrorCallback) this.onPeerErrorCallback(errMsg);
             this.peers.delete(peerId);
         });
 
@@ -329,6 +337,10 @@ export class P2pMesh {
 
     onPeerCountChanged(callback: (count: number) => void) {
         this.onPeerCountChange = callback;
+    }
+
+    onPeerError(callback: (err: string) => void) {
+        this.onPeerErrorCallback = callback;
     }
 
     getPeerCount() {
