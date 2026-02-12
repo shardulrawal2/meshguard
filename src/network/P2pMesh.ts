@@ -240,9 +240,10 @@ export class P2pMesh {
         const fingerprint = fpLine ? fpLine.split(' ')[1] : '';
         const setup = getValue('a=setup:');
 
-        // Keep ALL host candidates (IPv4/IPv6) for multi-network reliability
+        // Keep TOP 4 candidates (including srflx if host is missing) for hotspot reliability
         const candidates = lines
-            .filter((l: string) => l.startsWith('a=candidate:') && l.includes('typ host'))
+            .filter((l: string) => l.startsWith('a=candidate:'))
+            .slice(0, 4)
             .map((c: string) => c.replace('a=candidate:', '').trim());
 
         // Use a compact Key-Value format
@@ -274,20 +275,28 @@ export class P2pMesh {
 
             if (u) {
                 const candidates = c ? c.split(';') : [];
+
+                // Extract possible IP from first candidate for the c-line fallback
+                const firstCand = candidates[0] || '';
+                const parts = firstCand.split(' ');
+                const cLineIp = parts.length > 4 ? parts[4] : '0.0.0.0';
+
                 const sdpLines = [
                     'v=0',
-                    `o=- ${Math.floor(Date.now() / 1000)} 2 IN IP4 127.0.0.1`,
+                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Math.random() * 100)} IN IP4 127.0.0.1`,
                     's=-',
                     't=0 0',
+                    'a=group:BUNDLE 0',
                     'm=application 9 DTLS/SCTP 5000',
-                    'c=IN IP4 0.0.0.0',
+                    `c=IN IP4 ${cLineIp}`,
                     `a=ice-ufrag:${u}`,
                     `a=ice-pwd:${p}`,
                     `a=fingerprint:${a || 'sha-256'} ${f}`,
                     `a=setup:${s}`,
-                    `a=mid:0`,
-                    `a=sctpmap:5000 webrtc-datachannel 1024`,
-                    `a=max-message-size:262144`,
+                    'a=mid:0',
+                    'a=rtcp-mux',
+                    'a=rtcp-rsize',
+                    'a=sctpmap:5000 webrtc-datachannel 1024',
                     ...candidates.map((cand: string) => `a=candidate:${cand}`)
                 ];
                 signal.sdp = sdpLines.map(l => l.trim()).filter(Boolean).join('\r\n') + '\r\n';
