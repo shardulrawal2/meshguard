@@ -59,11 +59,40 @@ export const useSOS = () => {
         await offlineStorage.saveMessage(message);
         setMessages(prev => [message, ...prev]);
 
-        // Attempt broadcast
-        p2pMesh.broadcast(message);
+        // Attempt broadcast to connected peers
+        const peerCount = p2pMesh.getPeerCount();
+        if (peerCount > 0) {
+            console.log(`[useSOS] Broadcasting to ${peerCount} peers`);
+            p2pMesh.broadcast(message);
+        } else {
+            console.log('[useSOS] No peers connected, message queued locally');
+        }
 
         return message;
     };
 
-    return { messages, isOnline, sendSOS };
+    const sendTestMessage = async () => {
+        const testMessage: SOSMessage = {
+            id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `test-${Date.now()}`,
+            text: '🧪 Test Message - Mesh Network Active',
+            timestamp: Date.now(),
+            status: 'sent',
+            isAutoTriggered: false,
+            senderId: 'local-user',
+            hops: 0,
+        };
+
+        await offlineStorage.saveMessage(testMessage);
+        setMessages(prev => [testMessage, ...prev]);
+        
+        const peerCount = p2pMesh.getPeerCount();
+        if (peerCount > 0) {
+            console.log(`[useSOS] Test message broadcasting to ${peerCount} peers`);
+            p2pMesh.broadcast(testMessage);
+        }
+        
+        return testMessage;
+    };
+
+    return { messages, isOnline, sendSOS, sendTestMessage };
 };

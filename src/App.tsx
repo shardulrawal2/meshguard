@@ -8,7 +8,7 @@ import { fallDetector } from './ai/FallDetector';
 import { LayoutDashboard, Settings as SettingsIcon, MessageSquare } from 'lucide-react';
 
 function App() {
-  const { messages, isOnline, sendSOS } = useSOS();
+  const { messages, isOnline, sendSOS, sendTestMessage } = useSOS();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'messages' | 'settings'>('dashboard');
   const [fallDetectionOn, setFallDetectionOn] = useState(false);
 
@@ -48,16 +48,15 @@ function App() {
             <SosForm onSend={(text) => sendSOS(text)} />
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="font-bold text-lg flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-blue-400" />
-                  Recent Activity
-                </h3>
-                <button
-                  onClick={() => setActiveTab('messages')}
-                  className="text-xs font-semibold text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  View All
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button onClick={() => { }} className="p-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-indigo-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="12" cy="12" r="4" /><line x1="12" y1="16" x2="12" y2="16" /><line x1="12" y1="8" x2="12" y2="8" /></svg> Generate Link
+                </button>
+                <button onClick={() => { }} className="p-6 bg-slate-800 hover:bg-slate-700 text-white rounded-3xl transition-all active:scale-95 border border-white/5 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="12" cy="12" r="4" /><line x1="12" y1="16" x2="12" y2="16" /><line x1="12" y1="8" x2="12" y2="8" /></svg> Scan Peer
+                </button>
+                <button onClick={sendTestMessage} className="p-6 bg-green-600 hover:bg-green-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-green-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12" y2="16" /></svg> Test Message
                 </button>
               </div>
               <div className="space-y-4">
@@ -98,6 +97,7 @@ function App() {
             <Settings
               fallDetectionEnabled={fallDetectionOn}
               onToggleFallDetection={setFallDetectionOn}
+              onSendTestMessage={sendTestMessage}
             />
           </div>
         )}

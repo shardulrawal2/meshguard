@@ -3,15 +3,17 @@ import { Shield, Info, Radio, QrCode, Camera, X, CheckCircle2, RotateCcw, AlertT
 import { p2pMesh } from '../network/P2pMesh';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
+import type { SOSMessage } from '../types/sos';
 
 interface SettingsProps {
     fallDetectionEnabled: boolean;
     onToggleFallDetection: (val: boolean) => void;
+    onSendTestMessage?: () => Promise<SOSMessage>;
 }
 
 type HandshakeState = 'IDLE' | 'GENERATING' | 'SHOWING_OFFER' | 'SCANNING_ANSWER' | 'PROCESSING_SCAN' | 'SHOWING_ANSWER' | 'CONNECTING';
 
-export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onToggleFallDetection }) => {
+export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onToggleFallDetection, onSendTestMessage }) => {
     // Peer & UI State
     const [peerCount, setPeerCount] = useState(0);
     const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
@@ -67,22 +69,28 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
         p2pMesh.onSignal((compressed) => {
             const expanded = p2pMesh.expandSignal(compressed);
-            if (!expanded) return;
+            if (!expanded) {
+                addLog('Warning: Failed to expand own signal');
+                return;
+            }
 
             const isOffer = expanded.type === 'offer';
-            addLog(`Signal Ready: ${isOffer ? 'OFFER' : 'ANSWER'} (${compressed.length}c)`);
+            addLog(`Signal generated: ${isOffer ? 'OFFER' : 'ANSWER'} (${compressed.length} chars)`);
             setActiveSignal(compressed);
 
-            if (isOffer && stateRef.current === 'GENERATING') {
+            const currentState = stateRef.current;
+            if (isOffer && currentState === 'GENERATING') {
                 setState('SHOWING_OFFER');
-                setStatusMessage('Scan me with Peer');
+                setStatusMessage('Scan this QR with peer device');
                 setShowModal(true);
-                addLog('Offer QR Ready.');
-            } else if (!isOffer && stateRef.current === 'PROCESSING_SCAN') {
+                addLog('Offer QR ready for scanning');
+            } else if (!isOffer && currentState === 'PROCESSING_SCAN') {
                 setState('SHOWING_ANSWER');
-                setStatusMessage('Show this to Peer');
+                setStatusMessage('Show this QR to initiator');
                 setShowModal(true);
-                addLog('Answer QR Ready.');
+                addLog('Answer QR ready for scanning');
+            } else {
+                addLog(`Signal generated in unexpected state: ${currentState}`);
             }
         });
 
@@ -126,40 +134,60 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
     const processSignal = (text: string) => {
         try {
+            addLog(`Processing signal (${text.length} chars)`);
             const signal = p2pMesh.expandSignal(text);
             if (!signal) {
-                addLog('Error: Expansion Failed (Incompatible QR)');
-                setScanError('Incompatible QR Format');
+                addLog('Error: Signal expansion failed');
+                setScanError('Invalid QR Code Format');
                 return;
             }
 
-            if (stateRef.current === 'IDLE' || stateRef.current === 'PROCESSING_SCAN') {
-                if (signal.type !== 'offer') { setScanError('Scan Initiator Offer first'); return; }
-                addLog('Offer Received. Expansion Successful.');
+            const currentState = stateRef.current;
+            addLog(`Current state: ${currentState}, Signal type: ${signal.type}`);
+
+            if (currentState === 'IDLE' || currentState === 'PROCESSING_SCAN') {
+                if (signal.type !== 'offer') {
+                    addLog('Error: Expected offer but got different type');
+                    setScanError('Please scan the initiator offer first');
+                    return;
+                }
+                addLog('Offer received, generating response...');
                 setState('PROCESSING_SCAN');
                 setStatusMessage('Generating Response...');
                 stopScanning();
 
                 setTimeout(() => {
-                    addLog('Activating Responder...');
+                    addLog('Creating responder peer...');
                     p2pMesh.receiveConnection(signal);
-                }, 50);
-            } else if (stateRef.current === 'SCANNING_ANSWER' || stateRef.current === 'SHOWING_OFFER') {
-                addLog('Answer Received. Completing Handshake...');
+                }, 100);
+            } else if (currentState === 'SCANNING_ANSWER' || currentState === 'SHOWING_OFFER') {
+                if (signal.type !== 'answer') {
+                    addLog('Error: Expected answer but got different type');
+                    setScanError('Expected answer QR code');
+                    return;
+                }
+                addLog('Answer received, completing handshake...');
                 p2pMesh.completeHandshake(signal);
                 setState('CONNECTING');
                 setStatusMessage('Establishing Secure Link...');
                 stopScanning();
 
-                // Safety: Reset if connection takes > 15 seconds
+                // Safety timeout
                 setTimeout(() => {
                     if (stateRef.current === 'CONNECTING') {
-                        addLog('Connection Timed Out. Retrying...');
+                        addLog('Connection timeout - resetting');
                         handleReset();
                     }
                 }, 15000);
+            } else {
+                addLog(`Unexpected signal in state: ${currentState}`);
+                setScanError('Unexpected handshake state');
             }
-        } catch (err) { setScanError('Handshake Error'); }
+        } catch (err) {
+            console.error('[Settings] Signal processing error:', err);
+            addLog('Critical error during signal processing');
+            setScanError('Handshake Failed');
+        }
     };
 
     const handleManualSubmit = () => {
@@ -269,13 +297,18 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <button onClick={handleStartInitiation} className="p-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-indigo-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
                         <QrCode className="w-5 h-5" /> Generate Link
                     </button>
                     <button onClick={() => { handleReset(); setShowScanner(true); }} className="p-6 bg-slate-800 hover:bg-slate-700 text-white rounded-3xl transition-all active:scale-95 border border-white/5 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
                         <Camera className="w-5 h-5 text-slate-400" /> Scan Peer
                     </button>
+                    {peerCount > 0 && onSendTestMessage && (
+                        <button onClick={onSendTestMessage} className="p-6 bg-green-600 hover:bg-green-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-green-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
+                            <Radio className="w-5 h-5" /> Test Message
+                        </button>
+                    )}
                 </div>
 
                 {statusMessage && (

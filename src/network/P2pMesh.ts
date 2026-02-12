@@ -60,14 +60,26 @@ export class P2pMesh {
     private handleBroadcastMessage(event: MessageEvent) {
         const { type, sender, target, signal } = event.data;
         if (sender === this.myId || (target && target !== this.myId)) return;
-        if (type === 'presence' && !this.peers.has(sender)) {
-            this.createPeer(true, undefined, sender);
-        } else if (type === 'signal') {
-            if (!this.peers.has(sender)) {
-                if (signal.type === 'offer') this.createPeer(false, signal, sender);
-            } else {
-                this.peers.get(sender).signal(signal);
+        
+        try {
+            if (type === 'presence' && !this.peers.has(sender)) {
+                console.log('[P2pMesh] Auto-discovery: Creating peer for', sender);
+                this.createPeer(true, undefined, sender);
+            } else if (type === 'signal') {
+                if (!this.peers.has(sender)) {
+                    if (signal.type === 'offer') {
+                        console.log('[P2pMesh] Auto-discovery: Accepting offer from', sender);
+                        this.createPeer(false, signal, sender);
+                    }
+                } else {
+                    const peer = this.peers.get(sender);
+                    if (peer && !peer.destroyed) {
+                        peer.signal(signal);
+                    }
+                }
             }
+        } catch (err) {
+            console.error('[P2pMesh] Broadcast message error:', err);
         }
     }
 
@@ -94,7 +106,7 @@ export class P2pMesh {
         const peer = new SimplePeer({
             initiator,
             trickle: false,
-            config: { iceServers: [] } // PURE OFFLINE
+            config: { iceServers: [] }, // PURE OFFLINE
         });
 
         const peerId = remotePeerId || `qr-${Math.random().toString(36).substr(2, 5)}`;
@@ -106,10 +118,14 @@ export class P2pMesh {
             } else {
                 if (gatheringTimeout) clearTimeout(gatheringTimeout);
                 gatheringTimeout = setTimeout(() => {
+                    if (!data || !data.sdp) {
+                        console.warn('[P2pMesh] Invalid signal data received');
+                        return;
+                    }
                     const minified = this.minifySignal(data);
                     this.lastSignal = minified;
                     if (this.onSignalCallback) this.onSignalCallback(minified);
-                }, 800);
+                }, 1200); // Increased timeout for mobile SDP gathering
             }
         });
 
@@ -124,9 +140,10 @@ export class P2pMesh {
         });
 
         peer.on('error', (_err: any) => {
+            console.error('[P2pMesh] Peer error:', _err);
             this.peers.delete(peerId);
             if (this.onPeerCountChange) this.onPeerCountChange(this.peers.size);
-            if (this.onPeerErrorCallback) this.onPeerErrorCallback(_err.message || 'Peer Error');
+            if (this.onPeerErrorCallback) this.onPeerErrorCallback(_err.message || 'Peer Connection Failed');
         });
 
         peer.on('close', () => {
@@ -175,17 +192,18 @@ export class P2pMesh {
                 const sdp = [
                     'v=0',
                     `o=- ${Date.now()} 1 IN IP4 127.0.0.1`,
-                    's=-', 't=0 0', 'a=group:BUNDLE 0',
-                    'm=application 9 DTLS/SCTP 5000',
+                    's=-', 't=0 0',
+                    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
                     `c=IN IP${ipVer} ${cLineIp}`,
                     `a=ice-ufrag:${packed.u}`,
                     `a=ice-pwd:${packed.p}`,
                     `a=fingerprint:sha-256 ${packed.f}`,
                     `a=setup:${isOffer ? 'actpass' : 'active'}`,
-                    'a=mid:0', 'a=rtcp-mux', 'a=rtcp-rsize',
-                    'a=sctpmap:5000 webrtc-datachannel 1024',
-                    ...candidates.map((c: string) => `a=candidate:${c}`)
-                ].join('\r\n') + '\r\n';
+                    'a=mid:data', 'a=rtcp-mux', 'a=rtcp-rsize',
+                    'a=sctp-port:5000',
+                    'a=max-message-size:262144',
+                    ...candidates.filter((c: string) => c.trim()).map((c: string) => `a=candidate:${c}`)
+                ].filter(line => line && !line.includes('a=sctpmap:')).join('\r\n') + '\r\n';
                 return { type: isOffer ? 'offer' : 'answer', sdp };
             }
             return { type: isOffer ? 'offer' : 'answer', sdp: '' };
@@ -193,16 +211,52 @@ export class P2pMesh {
     }
 
     private async handleIncomingMessage(message: SOSMessage, fromPeerId: string) {
-        if (await offlineStorage.getMessage(message.id)) return;
-        message.status = 'received';
-        await offlineStorage.saveMessage(message);
-        this.onMessageCallbacks.forEach(cb => cb(message));
-        if (message.hops < 5) this.broadcast(message, [fromPeerId]);
+        try {
+            // Prevent duplicate processing
+            if (await offlineStorage.getMessage(message.id)) {
+                console.log('[P2pMesh] Duplicate message ignored:', message.id);
+                return;
+            }
+            
+            message.status = 'received';
+            await offlineStorage.saveMessage(message);
+            
+            console.log('[P2pMesh] New message received:', message.id);
+            this.onMessageCallbacks.forEach(cb => {
+                try { cb(message); } catch (err) { console.error('[P2pMesh] Callback error:', err); }
+            });
+            
+            // Relay to mesh if within hop limit
+            if (message.hops < 5) {
+                this.broadcast(message, [fromPeerId]);
+            }
+        } catch (err) {
+            console.error('[P2pMesh] Message handling error:', err);
+        }
     }
 
     broadcast(message: SOSMessage, exclude: string[] = []) {
         const payload = JSON.stringify({ ...message, hops: (message.hops || 0) + 1 });
-        this.peers.forEach((peer, id) => { if (!exclude.includes(id)) try { peer.send(payload); } catch (err) { } });
+        let successCount = 0;
+        let failCount = 0;
+        
+        this.peers.forEach((peer, id) => {
+            if (!exclude.includes(id)) {
+                try {
+                    if (!peer.destroyed && peer.connected) {
+                        peer.send(payload);
+                        successCount++;
+                    } else {
+                        failCount++;
+                    }
+                } catch (err) {
+                    console.error('[P2pMesh] Broadcast failed to peer', id, err);
+                    failCount++;
+                }
+            }
+        });
+        
+        console.log(`[P2pMesh] Broadcast: ${successCount} sent, ${failCount} failed`);
     }
 
     onMessage(cb: (m: SOSMessage) => void) { this.onMessageCallbacks.push(cb); }

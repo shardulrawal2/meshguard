@@ -5,17 +5,15 @@ export interface ISyncService {
     onMessageReceived(callback: (message: SOSMessage) => void): void;
 }
 
-// Initial placeholder implementation. Can be replaced with Firebase or Next.js API.
+// Local-first P2P sync service. No external servers.
 export class PluggableSyncService implements ISyncService {
     async syncMessage(message: SOSMessage): Promise<boolean> {
-        console.log('[SyncService] Mock syncing message:', message);
-        // Simulate network delay
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log('[SyncService] P2P mesh handles sync locally:', message);
         return true;
     }
 
     onMessageReceived(_callback: (message: SOSMessage) => void): void {
-        // Mock incoming messages from server
+        // P2P mesh handles incoming messages via WebRTC
     }
 }
 
