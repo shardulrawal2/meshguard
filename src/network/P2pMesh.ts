@@ -111,6 +111,7 @@ export class P2pMesh {
 
     // New method to respond to a connection attempt
     receiveConnection(signalData: any, remotePeerId?: string) {
+        this.lastSignal = null; // Clear old signals before starting responder
         return this.createPeer(false, signalData, remotePeerId);
     }
 
@@ -266,6 +267,7 @@ export class P2pMesh {
                     `a=setup:${setup}`,
                     `a=mid:0`,
                     `a=sctp-port:5000`,
+                    `a=max-message-size:262144`, // Helpful for simple-peer
                     candidate ? `a=candidate:${candidate}` : '',
                 ].filter(Boolean);
                 signal.sdp = sdpLines.join('\r\n') + '\r\n';
