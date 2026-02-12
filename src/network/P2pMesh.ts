@@ -230,12 +230,14 @@ export class P2pMesh {
 
         const getValue = (prefix: string) => {
             const line = lines.find((l: string) => l.startsWith(prefix));
-            return line ? line.split(':')[1] || line.split('=')[1] : '';
+            return line ? line.substring(prefix.length).trim() : '';
         };
 
         const ufrag = getValue('a=ice-ufrag:');
         const pwd = getValue('a=ice-pwd:');
-        const fingerprint = getValue('a=fingerprint:').split(' ')[1] || '';
+        const fpLine = getValue('a=fingerprint:'); // e.g. "sha-256 XX:XX..."
+        const fingerprintAlg = fpLine ? fpLine.split(' ')[0] : 'sha-256';
+        const fingerprint = fpLine ? fpLine.split(' ')[1] : '';
         const setup = getValue('a=setup:');
 
         // Keep ALL host candidates (IPv4/IPv6) for multi-network reliability
@@ -248,8 +250,9 @@ export class P2pMesh {
             t: type,
             u: ufrag,
             p: pwd,
+            a: fingerprintAlg,
             f: fingerprint,
-            s: setup,
+            s: setup || 'actpass',
             c: candidates.join(';')
         };
 
@@ -262,7 +265,7 @@ export class P2pMesh {
             if (!json) return null;
 
             const packed = JSON.parse(json);
-            const { t, u, p, f, s, c } = packed;
+            const { t, u, p, a, f, s, c } = packed;
 
             const signal: any = {
                 type: t === '1' ? 'offer' : 'answer',
@@ -276,19 +279,18 @@ export class P2pMesh {
                     'o=- 0 0 IN IP4 127.0.0.1',
                     's=-',
                     't=0 0',
-                    'a=group:BUNDLE 0',
-                    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+                    'a=msid-semantic: WMS',
+                    'm=application 9 DTLS/SCTP 5000',
                     'c=IN IP4 0.0.0.0',
                     `a=ice-ufrag:${u}`,
                     `a=ice-pwd:${p}`,
-                    `a=fingerprint:sha-256 ${f}`,
+                    `a=fingerprint:${a || 'sha-256'} ${f}`,
                     `a=setup:${s}`,
                     `a=mid:0`,
-                    `a=sctp-port:5000`,
+                    `a=sctpmap:5000 webrtc-datachannel 1024`,
                     `a=max-message-size:262144`,
                     ...candidates.map((cand: string) => `a=candidate:${cand}`)
                 ];
-                // CRITICAL: Ensure no trailing space or hidden conflicting lines
                 signal.sdp = sdpLines.map(l => l.trim()).filter(Boolean).join('\r\n') + '\r\n';
             }
             return signal;
