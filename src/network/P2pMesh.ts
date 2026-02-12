@@ -151,8 +151,13 @@ export class P2pMesh {
         // Use remotePeerId if provided (auto-discovery), otherwise generate temp ID (QR scan)
         const peerId = remotePeerId || `qr-${Math.random().toString(36).substr(2, 5)}`;
 
+        let signalBatch: any = null;
+        let gatheringTimeout: any = null;
+
         peer.on('signal', (data: any) => {
-            // If we know the remote peer ID (Auto-Discovery), send signal via BroadcastChannel
+            signalBatch = data;
+
+            // If we know the remote peer ID (Auto-Discovery), send signal via BroadcastChannel instantly
             if (remotePeerId) {
                 this.broadcastChannel.postMessage({
                     type: 'signal',
@@ -161,16 +166,16 @@ export class P2pMesh {
                     signal: data
                 });
             } else {
-                // MACROSCOPIC QR FLOW: Minify the signal
-                const minified = this.minifySignal(data);
-                this.lastSignal = minified;
+                // MACROSCOPIC QR FLOW: Wait for candidates to settle (v6.1)
+                if (gatheringTimeout) clearTimeout(gatheringTimeout);
 
-                // Persist our OWN last generated signal for potential auto-recovery
-                if (remotePeerId) {
-                    this.savePeerSignal(remotePeerId, minified);
-                }
+                gatheringTimeout = setTimeout(() => {
+                    if (!signalBatch) return;
+                    const minified = this.minifySignal(signalBatch);
+                    this.lastSignal = minified;
 
-                if (this.onSignalCallback) this.onSignalCallback(minified);
+                    if (this.onSignalCallback) this.onSignalCallback(minified);
+                }, 800);
             }
         });
 
