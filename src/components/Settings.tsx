@@ -447,17 +447,17 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                             )}
                         </div>
 
-                        <div className="bg-white p-4 rounded-3xl inline-block border-4 border-slate-200 shadow-inner">
+                        <div className="bg-white p-6 rounded-3xl inline-block border-8 border-white shadow-2xl">
                             {mySignal ? (
                                 <QRCodeSVG
                                     value={mySignal}
-                                    size={250}
+                                    size={320}
                                     level="L"
-                                    includeMargin={true}
+                                    includeMargin={false}
                                 />
                             ) : (
-                                <div className="w-[250px] h-[250px] flex items-center justify-center">
-                                    <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                                <div className="w-[320px] h-[320px] flex items-center justify-center">
+                                    <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
                                 </div>
                             )}
                         </div>
