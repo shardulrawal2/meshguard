@@ -72,8 +72,51 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         }
     };
 
+    const [connectionStage, setConnectionStage] = useState<'idle' | 'showing-offer' | 'pending-acceptance' | 'showing-answer'>('idle');
+    const [pendingOffer, setPendingOffer] = useState<any>(null);
+
+    const handleScanResult = (decodedText: string) => {
+        try {
+            const signal = JSON.parse(decodedText);
+
+            if (signal.type === 'offer') {
+                // I am the Receiver
+                setPendingOffer(signal);
+                setConnectionStage('pending-acceptance');
+                stopScanning(); // Stop scanner to show acceptance prompt
+            } else if (signal.type === 'answer') {
+                // I am the Initiator completing the loop
+                p2pMesh.completeHandshake(signal);
+                stopScanning();
+                alert('✅ CONNECTION ESTABLISHED! You are now linked.');
+                setConnectionStage('idle');
+            } else {
+                // Handle legacy/other signals or invalid codes
+                p2pMesh.receiveConnection(signal); // Fallback
+                stopScanning();
+            }
+        } catch (err) {
+            // Ignore noise
+        }
+    };
+
+    const handleAcceptConnection = () => {
+        if (pendingOffer) {
+            p2pMesh.receiveConnection(pendingOffer);
+            setConnectionStage('showing-answer');
+            setPendingOffer(null);
+            setShowQr(true); // Show the answer QR
+        }
+    };
+
+    const handleDenyConnection = () => {
+        setPendingOffer(null);
+        setConnectionStage('idle');
+    };
+
     const handleInititiate = () => {
         p2pMesh.initiateConnection();
+        setConnectionStage('showing-offer');
         setShowQr(true);
     };
 
@@ -92,22 +135,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                     aspectRatio: 1.0
                 },
                 (decodedText) => {
-                    // Success callback
-                    try {
-                        const signal = JSON.parse(decodedText);
-                        p2pMesh.receiveConnection(signal);
-
-                        // Stop scanning immediately on success
-                        html5QrCode.stop().then(() => {
-                            html5QrCode.clear();
-                            setScannerObject(null);
-                            setShowScanner(false);
-                            alert('⚡ INSTANT CONNECT: Peer Linked!');
-                        });
-                        setScanError('');
-                    } catch (err) {
-                        // Ignore non-JSON QR codes (likely not ours)
-                    }
+                    handleScanResult(decodedText);
                 },
                 () => {
                     // Ignore scan errors as they happen every frame
@@ -152,16 +180,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 aspectRatio: 1.0
             },
             (decodedText) => {
-                try {
-                    const signal = JSON.parse(decodedText);
-                    p2pMesh.receiveConnection(signal);
-                    scannerObject.stop().then(() => {
-                        scannerObject.clear();
-                        setScannerObject(null);
-                        setShowScanner(false);
-                        alert('⚡ INSTANT CONNECT: Peer Linked!');
-                    });
-                } catch (err) { }
+                handleScanResult(decodedText);
             },
             () => { }
         );
@@ -300,45 +319,97 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 </div>
             </div>
 
-            {/* QR Modal */}
+            {/* QR Modal - Improved for Twe-Way Handshake */}
             {showQr && (
                 <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-xl z-[9999] flex items-center justify-center p-6 transition-all duration-300">
-                    <div className="bg-white p-8 rounded-[3rem] space-y-6 max-w-sm w-full text-center relative overflow-hidden">
+                    <div className="bg-white p-8 rounded-[3rem] space-y-6 max-w-sm w-full text-center relative overflow-hidden shadow-2xl">
                         <button
-                            onClick={() => setShowQr(false)}
+                            onClick={() => { setShowQr(false); setConnectionStage('idle'); }}
                             className="absolute top-6 right-6 p-2 bg-slate-100 rounded-full text-slate-400 hover:text-slate-900 transition-colors"
                         >
                             <X className="w-5 h-5" />
                         </button>
 
                         <div className="space-y-2 pt-4">
-                            <h3 className="text-slate-900 font-black text-xl uppercase tracking-tighter">Your Sync Key</h3>
-                            <p className="text-slate-500 text-xs font-medium">Scan this with your phone camera</p>
-                            <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-3 mt-3">
-                                <p className="text-[10px] text-yellow-800 font-medium leading-relaxed">
-                                    💡 <strong>Screen Scan Tips:</strong> Increase screen brightness, hold phone 6-8 inches away, avoid glare
-                                </p>
-                            </div>
+                            <h3 className="text-slate-900 font-black text-xl uppercase tracking-tighter">
+                                {connectionStage === 'showing-answer' ? 'Step 2: Show Back' : 'Step 1: Scan Me'}
+                            </h3>
+                            <p className="text-slate-500 text-xs font-medium">
+                                {connectionStage === 'showing-answer'
+                                    ? 'Ask the Initiator to scan this code to execute handshake.'
+                                    : 'Ask your peer to scan this code first.'}
+                            </p>
+
+                            {connectionStage === 'showing-offer' && (
+                                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3 mt-3 animate-pulse">
+                                    <p className="text-[10px] text-indigo-800 font-bold leading-relaxed">
+                                        Waiting for peer to scan...
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="bg-white p-8 rounded-3xl inline-block border-4 border-slate-200 shadow-inner">
+                        <div className="bg-white p-4 rounded-3xl inline-block border-4 border-slate-200 shadow-inner">
                             {mySignal ? (
                                 <QRCodeSVG
                                     value={mySignal}
-                                    size={280}
-                                    level="H"
+                                    size={250}
+                                    level="L"
                                     includeMargin={true}
-                                    bgColor="#ffffff"
-                                    fgColor="#000000"
                                 />
                             ) : (
-                                <div className="w-[280px] h-[280px] flex items-center justify-center">
+                                <div className="w-[250px] h-[250px] flex items-center justify-center">
                                     <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
                                 </div>
                             )}
                         </div>
 
-                        <p className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em]">MESHGUARD DISASTER PROTOCOL</p>
+                        {/* Handshake Completion Button for Initiator */}
+                        {connectionStage === 'showing-offer' && (
+                            <button
+                                onClick={() => { setShowQr(false); setShowScanner(true); }}
+                                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-indigo-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
+                            >
+                                <Camera className="w-5 h-5" />
+                                <span>Step 2: Scan Response</span>
+                            </button>
+                        )}
+
+                        {connectionStage === 'showing-answer' && (
+                            <div className="text-[10px] font-medium text-slate-400">
+                                Keep this open until Connected alert appears on Initiator's device.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Accept Connection Modal */}
+            {connectionStage === 'pending-acceptance' && (
+                <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xl z-[9999] flex items-center justify-center p-6">
+                    <div className="bg-slate-900 border border-white/10 p-8 rounded-[2.5rem] w-full max-w-sm text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto text-blue-400 animate-bounce">
+                            <Shield className="w-8 h-8" />
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Connection Request</h3>
+                            <p className="text-slate-400 text-sm">A peer wants to connect to your mesh node.</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 pt-4">
+                            <button
+                                onClick={handleDenyConnection}
+                                className="py-4 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-2xl font-bold uppercase tracking-wider transition-colors"
+                            >
+                                Deny
+                            </button>
+                            <button
+                                onClick={handleAcceptConnection}
+                                className="py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-wider shadow-lg shadow-blue-900/20 transition-transform active:scale-95"
+                            >
+                                Accept
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

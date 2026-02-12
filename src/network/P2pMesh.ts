@@ -12,6 +12,7 @@ export class P2pMesh {
     private savedPeers: Map<string, any> = new Map(); // Store peer signals for reconnection
     private broadcastChannel: BroadcastChannel;
     private myId: string;
+    private pendingInitiator: any = null; // Track the peer waiting for an answer
 
     constructor() {
         this.myId = `peer-${Math.random().toString(36).substr(2, 9)}`;
@@ -102,12 +103,25 @@ export class P2pMesh {
 
     initiateConnection() {
         this.lastSignal = null;
-        return this.createPeer(true);
+        const peer = this.createPeer(true);
+        this.pendingInitiator = peer;
+        return peer;
     }
 
     // New method to respond to a connection attempt
     receiveConnection(signalData: any) {
         return this.createPeer(false, signalData);
+    }
+
+    // Complete the handshake by providing the answer signal to the initiator
+    completeHandshake(signalData: any) {
+        if (this.pendingInitiator) {
+            console.log('[P2pMesh] Completing handshake with answer signal');
+            this.pendingInitiator.signal(signalData);
+            this.pendingInitiator = null; // Handshake complete
+        } else {
+            console.warn('[P2pMesh] No pending initiator found to complete handshake');
+        }
     }
 
     private createPeer(initiator: boolean, remoteSignal?: any, remotePeerId?: string) {
