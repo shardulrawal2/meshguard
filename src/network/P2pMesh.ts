@@ -212,42 +212,46 @@ export class P2pMesh {
         }
     }
 
-    // AGGRESSIVE SDP MINIFICATION
+    // ULTRA-MICRO SDP MINIFICATION (Positional Format)
     private minifySignal(signal: any): string {
-        const minified: any = { t: signal.type === 'offer' ? 1 : 2 };
+        const type = signal.type === 'offer' ? '1' : '2';
+        if (!signal.sdp) return LZString.compressToEncodedURIComponent(type);
 
-        if (signal.sdp) {
-            // Keep only essential SDP lines: ufrag, pwd, fingerprint, setup, candidate
-            const lines = signal.sdp.split('\r\n');
-            const essentials = lines.filter((l: string) =>
-                l.startsWith('a=ice-ufrag') ||
-                l.startsWith('a=ice-pwd') ||
-                l.startsWith('a=fingerprint') ||
-                l.startsWith('a=candidate') ||
-                l.startsWith('a=setup') ||
-                l.startsWith('c=')
-            );
-            minified.s = essentials.join('|');
-        }
+        const lines = signal.sdp.split('\r\n');
 
-        const json = JSON.stringify(minified);
-        return LZString.compressToEncodedURIComponent(json);
+        const getValue = (prefix: string) => {
+            const line = lines.find((l: string) => l.startsWith(prefix));
+            return line ? line.split(':')[1] || line.split('=')[1] : '';
+        };
+
+        const ufrag = getValue('a=ice-ufrag:');
+        const pwd = getValue('a=ice-pwd:');
+        const fingerprint = getValue('a=fingerprint:').split(' ')[1] || ''; // sha-256 XX:XX...
+        const setup = getValue('a=setup:');
+
+        // Only keep the FIRST host candidate to save space
+        const candidateLine = lines.find((l: string) => l.startsWith('a=candidate:') && l.includes('typ host'));
+        const candidate = candidateLine ? candidateLine.replace('a=candidate:', '') : '';
+
+        // Format: type,ufrag,pwd,fingerprint,setup,candidate
+        const packed = [type, ufrag, pwd, fingerprint, setup, candidate].join(',');
+        return LZString.compressToEncodedURIComponent(packed);
     }
 
     public expandSignal(compressed: string): any {
         try {
-            const json = LZString.decompressFromEncodedURIComponent(compressed);
-            if (!json) return null;
-            const min = JSON.parse(json);
+            const packed = LZString.decompressFromEncodedURIComponent(compressed);
+            if (!packed) return null;
+
+            const parts = packed.split(',');
+            const [type, ufrag, pwd, fingerprint, setup, candidate] = parts;
 
             const signal: any = {
-                type: min.t === 1 ? 'offer' : 'answer',
+                type: type === '1' ? 'offer' : 'answer',
                 sdp: ''
             };
 
-            if (min.s) {
-                // Reconstruct a "valid enough" SDP for simple-peer
-                const lines = min.s.split('|');
+            if (ufrag) {
                 const sdpLines = [
                     'v=0',
                     'o=- 0 0 IN IP4 127.0.0.1',
@@ -255,8 +259,15 @@ export class P2pMesh {
                     't=0 0',
                     'a=msid-semantic: WMS',
                     'm=application 9 DTLS/SCTP 5000',
-                    ...lines
-                ];
+                    'c=IN IP4 0.0.0.0',
+                    `a=ice-ufrag:${ufrag}`,
+                    `a=ice-pwd:${pwd}`,
+                    `a=fingerprint:sha-256 ${fingerprint}`,
+                    `a=setup:${setup}`,
+                    `a=mid:0`,
+                    `a=sctp-port:5000`,
+                    candidate ? `a=candidate:${candidate}` : '',
+                ].filter(Boolean);
                 signal.sdp = sdpLines.join('\r\n') + '\r\n';
             }
             return signal;
