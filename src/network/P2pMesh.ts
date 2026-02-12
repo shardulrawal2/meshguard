@@ -27,6 +27,7 @@ export class P2pMesh {
         this.broadcastChannel.postMessage({ type: 'presence', sender: this.myId });
 
         this.loadSavedPeers();
+        this.startAutoReconnectLoop();
     }
 
     // Load saved peer signals from IndexedDB
@@ -55,11 +56,20 @@ export class P2pMesh {
             const store = tx.objectStore('peers');
             await store.put({ id: peerId, signal, timestamp: Date.now() });
             this.savedPeers.set(peerId, signal);
-            this.savedPeers.set(peerId, signal);
             console.log(`[P2pMesh] Saved peer ${peerId} for reconnection`);
         } catch (err: any) {
             console.warn('[P2pMesh] Could not save peer:', err);
         }
+    }
+
+    // Auto-reconnect loop runs every 20s to restore broken links
+    private startAutoReconnectLoop() {
+        setInterval(() => {
+            if (this.peers.size === 0 && this.savedPeers.size > 0) {
+                console.log('[P2pMesh] Auto-recovery: Attempting to find saved peers...');
+                this.reconnectToSavedPeers();
+            }
+        }, 20000);
     }
 
     // Auto-reconnect to saved peers
@@ -153,8 +163,13 @@ export class P2pMesh {
             } else {
                 // MACROSCOPIC QR FLOW: Minify the signal
                 const minified = this.minifySignal(data);
-                console.log(`[P2pMesh] Minified Signal (${data.type}):`, minified.length, "chars");
                 this.lastSignal = minified;
+
+                // Persist our OWN last generated signal for potential auto-recovery
+                if (remotePeerId) {
+                    this.savePeerSignal(remotePeerId, minified);
+                }
+
                 if (this.onSignalCallback) this.onSignalCallback(minified);
             }
         });
