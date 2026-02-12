@@ -153,29 +153,47 @@ export class P2pMesh {
 
         let signalBatch: any = null;
         let gatheringTimeout: any = null;
+        let gatheringFinished = false;
+
+        const emitFinalSignal = () => {
+            if (gatheringFinished || !signalBatch) return;
+            gatheringFinished = true;
+            if (gatheringTimeout) clearTimeout(gatheringTimeout);
+
+            const minified = this.minifySignal(signalBatch);
+            this.lastSignal = minified;
+            if (this.onSignalCallback) this.onSignalCallback(minified);
+            console.log('[P2pMesh] Final signal generated (Gathering Complete)');
+        };
+
+        // @ts-ignore - Access underlying PC for state monitoring
+        const pc = peer._pc;
+        if (pc) {
+            pc.onicegatheringstatechange = () => {
+                if (pc.iceGatheringState === 'complete') {
+                    console.log('[P2pMesh] ICE Gathering State: COMPLETE');
+                    emitFinalSignal();
+                }
+            };
+        }
 
         peer.on('signal', (data: any) => {
             signalBatch = data;
 
-            // If we know the remote peer ID (Auto-Discovery), send signal via BroadcastChannel instantly
             if (remotePeerId) {
+                // Auto-Discovery: Send immediately via BroadcastChannel
                 this.broadcastChannel.postMessage({
-                    type: 'signal',
-                    sender: this.myId,
-                    target: remotePeerId,
-                    signal: data
+                    type: 'signal', sender: this.myId, target: remotePeerId, signal: data
                 });
             } else {
-                // MACROSCOPIC QR FLOW: Wait for candidates to settle (v6.1)
+                // QR Flow: Wait for 'complete' or fallback
                 if (gatheringTimeout) clearTimeout(gatheringTimeout);
+                gatheringTimeout = setTimeout(emitFinalSignal, 2000); // 2s absolute fallback
 
-                gatheringTimeout = setTimeout(() => {
-                    if (!signalBatch) return;
-                    const minified = this.minifySignal(signalBatch);
-                    this.lastSignal = minified;
-
-                    if (this.onSignalCallback) this.onSignalCallback(minified);
-                }, 800);
+                // If gathering is already complete by the time we get the signal
+                if (pc && pc.iceGatheringState === 'complete') {
+                    emitFinalSignal();
+                }
             }
         });
 

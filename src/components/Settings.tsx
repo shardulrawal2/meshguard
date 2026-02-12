@@ -73,9 +73,10 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             addLog(`Signal Ready: ${isOffer ? 'OFFER' : 'ANSWER'} (${compressed.length}c)`);
             setActiveSignal(compressed);
 
-            if (isOffer && (stateRef.current === 'GENERATING' || stateRef.current === 'IDLE')) {
+            if (isOffer && stateRef.current === 'GENERATING') {
                 setState('SHOWING_OFFER');
-                setShowModal(true);
+                setStatusMessage('Link Ready to Scan');
+                addLog('Offer QR Generated.');
             } else if (!isOffer && stateRef.current === 'PROCESSING_SCAN') {
                 setState('SHOWING_ANSWER');
                 setShowModal(true);
@@ -171,8 +172,8 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     const handleStartInitiation = () => {
         handleReset();
         setState('GENERATING');
-        setStatusMessage('Initializing...');
-        addLog('Initiating WebRTC Offer...');
+        setStatusMessage('Gathering Paths...');
+        addLog('Searching for Local IP Paths...');
         p2pMesh.initiateConnection();
     };
 
