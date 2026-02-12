@@ -151,49 +151,21 @@ export class P2pMesh {
         // Use remotePeerId if provided (auto-discovery), otherwise generate temp ID (QR scan)
         const peerId = remotePeerId || `qr-${Math.random().toString(36).substr(2, 5)}`;
 
-        let signalBatch: any = null;
         let gatheringTimeout: any = null;
-        let gatheringFinished = false;
-
-        const emitFinalSignal = () => {
-            if (gatheringFinished || !signalBatch) return;
-            gatheringFinished = true;
-            if (gatheringTimeout) clearTimeout(gatheringTimeout);
-
-            const minified = this.minifySignal(signalBatch);
-            this.lastSignal = minified;
-            if (this.onSignalCallback) this.onSignalCallback(minified);
-            console.log('[P2pMesh] Final signal generated (Gathering Complete)');
-        };
-
-        // @ts-ignore - Access underlying PC for state monitoring
-        const pc = peer._pc;
-        if (pc) {
-            pc.onicegatheringstatechange = () => {
-                if (pc.iceGatheringState === 'complete') {
-                    console.log('[P2pMesh] ICE Gathering State: COMPLETE');
-                    emitFinalSignal();
-                }
-            };
-        }
 
         peer.on('signal', (data: any) => {
-            signalBatch = data;
-
             if (remotePeerId) {
-                // Auto-Discovery: Send immediately via BroadcastChannel
                 this.broadcastChannel.postMessage({
                     type: 'signal', sender: this.myId, target: remotePeerId, signal: data
                 });
             } else {
-                // QR Flow: Wait for 'complete' or fallback
+                // QR Flow: Debounce for 600ms to gather local candidates
                 if (gatheringTimeout) clearTimeout(gatheringTimeout);
-                gatheringTimeout = setTimeout(emitFinalSignal, 2000); // 2s absolute fallback
-
-                // If gathering is already complete by the time we get the signal
-                if (pc && pc.iceGatheringState === 'complete') {
-                    emitFinalSignal();
-                }
+                gatheringTimeout = setTimeout(() => {
+                    const minified = this.minifySignal(data);
+                    this.lastSignal = minified;
+                    if (this.onSignalCallback) this.onSignalCallback(minified);
+                }, 600);
             }
         });
 
@@ -273,10 +245,9 @@ export class P2pMesh {
 
         const ufrag = getValue('a=ice-ufrag:');
         const pwd = getValue('a=ice-pwd:');
-        const fpLine = getValue('a=fingerprint:'); // e.g. "sha-256 XX:XX..."
+        const fpLine = getValue('a=fingerprint:');
         const fingerprintAlg = fpLine ? fpLine.split(' ')[0] : 'sha-256';
         const fingerprint = fpLine ? fpLine.split(' ')[1] : '';
-        const setup = getValue('a=setup:');
 
         // Keep TOP 4 candidates (including srflx if host is missing) for hotspot reliability
         const candidates = lines
@@ -291,7 +262,6 @@ export class P2pMesh {
             p: pwd,
             a: fingerprintAlg,
             f: fingerprint,
-            s: setup || 'actpass',
             c: candidates.join(';')
         };
 
@@ -304,7 +274,7 @@ export class P2pMesh {
             if (!json) return null;
 
             const packed = JSON.parse(json);
-            const { t, u, p, a, f, s, c } = packed;
+            const { t, u, p, a, f, c } = packed;
 
             const signal: any = {
                 type: t === '1' ? 'offer' : 'answer',
@@ -313,11 +283,10 @@ export class P2pMesh {
 
             if (u) {
                 const candidates = c ? c.split(';') : [];
-
-                // Extract possible IP from first candidate for the c-line fallback
                 const firstCand = candidates[0] || '';
                 const parts = firstCand.split(' ');
                 const cLineIp = parts.length > 4 ? parts[4] : '0.0.0.0';
+                const isOffer = t === '1';
 
                 const sdpLines = [
                     'v=0',
@@ -325,16 +294,15 @@ export class P2pMesh {
                     's=-',
                     't=0 0',
                     'a=group:BUNDLE 0',
-                    'm=application 9 DTLS/SCTP 5000',
+                    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
                     `c=IN IP4 ${cLineIp}`,
                     `a=ice-ufrag:${u}`,
                     `a=ice-pwd:${p}`,
                     `a=fingerprint:${a || 'sha-256'} ${f}`,
-                    `a=setup:${s}`,
+                    `a=setup:${isOffer ? 'actpass' : 'active'}`,
                     'a=mid:0',
-                    'a=rtcp-mux',
-                    'a=rtcp-rsize',
-                    'a=sctpmap:5000 webrtc-datachannel 1024',
+                    'a=sctp-port:5000',
+                    'a=max-message-size:262144',
                     ...candidates.map((cand: string) => `a=candidate:${cand}`)
                 ];
                 signal.sdp = sdpLines.map(l => l.trim()).filter(Boolean).join('\r\n') + '\r\n';

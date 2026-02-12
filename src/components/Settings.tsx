@@ -75,12 +75,14 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
             if (isOffer && stateRef.current === 'GENERATING') {
                 setState('SHOWING_OFFER');
-                setStatusMessage('Link Ready to Scan');
-                addLog('Offer QR Generated.');
+                setStatusMessage('Scan me with Peer');
+                setShowModal(true);
+                addLog('Offer QR Ready.');
             } else if (!isOffer && stateRef.current === 'PROCESSING_SCAN') {
                 setState('SHOWING_ANSWER');
+                setStatusMessage('Show this to Peer');
                 setShowModal(true);
-                setStatusMessage('Response Generated');
+                addLog('Answer QR Ready.');
             }
         });
 
