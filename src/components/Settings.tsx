@@ -4,6 +4,7 @@ import { p2pMesh } from '../network/P2pMesh';
 // import { bluetoothService } from '../network/BluetoothService';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
+import LZString from 'lz-string';
 
 interface SettingsProps {
     fallDetectionEnabled: boolean;
@@ -27,7 +28,9 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     useEffect(() => {
         // Listen for signal generation
         p2pMesh.onSignal((signal) => {
-            setMySignal(JSON.stringify(signal));
+            // Compress the signal to make QR less dense and faster to scan
+            const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(signal));
+            setMySignal(compressed);
         });
 
         // Listen for peer count changes
@@ -77,7 +80,16 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
     const handleScanResult = (decodedText: string) => {
         try {
-            const signal = JSON.parse(decodedText);
+            // Attempt to decompress first
+            let signalString = decodedText;
+            try {
+                const decompressed = LZString.decompressFromEncodedURIComponent(decodedText);
+                if (decompressed) signalString = decompressed;
+            } catch (e) {
+                // Not compressed or invalid, use original text
+            }
+
+            const signal = JSON.parse(signalString);
 
             if (signal.type === 'offer') {
                 // I am the Receiver
@@ -127,13 +139,18 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         setScannerObject(html5QrCode);
 
         try {
+            const config: any = {
+                fps: 30, // Maximize FPS for speed
+                qrbox: { width: 300, height: 300 },
+                aspectRatio: 1.0,
+                experimentalFeatures: {
+                    useBarCodeDetectorIfSupported: true // Use native barcode detector for speed
+                }
+            };
+
             await html5QrCode.start(
                 selectedCameraId,
-                {
-                    fps: 15, // Higher FPS for faster scanning
-                    qrbox: { width: 300, height: 300 }, // Larger scanning area
-                    aspectRatio: 1.0
-                },
+                config,
                 (decodedText) => {
                     handleScanResult(decodedText);
                 },
@@ -170,15 +187,20 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
         setSelectedCameraId(nextCameraId);
 
-        // Restart scanner with new camera
+        // Restart scanner with new camera and Optimized Config
         await scannerObject.stop();
+        const config: any = {
+            fps: 30,
+            qrbox: { width: 300, height: 300 },
+            aspectRatio: 1.0,
+            experimentalFeatures: {
+                useBarCodeDetectorIfSupported: true
+            }
+        };
+
         await scannerObject.start(
             nextCameraId,
-            {
-                fps: 15,
-                qrbox: { width: 300, height: 300 },
-                aspectRatio: 1.0
-            },
+            config,
             (decodedText) => {
                 handleScanResult(decodedText);
             },
