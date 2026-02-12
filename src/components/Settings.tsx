@@ -9,11 +9,19 @@ interface SettingsProps {
     fallDetectionEnabled: boolean;
     onToggleFallDetection: (val: boolean) => void;
     onSendTestMessage?: () => Promise<SOSMessage>;
+    initialAction?: 'generate' | 'scan' | null;
+    onActionHandled?: () => void;
 }
 
 type HandshakeState = 'IDLE' | 'GENERATING' | 'SHOWING_OFFER' | 'SCANNING_ANSWER' | 'PROCESSING_SCAN' | 'SHOWING_ANSWER' | 'CONNECTING';
 
-export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onToggleFallDetection, onSendTestMessage }) => {
+export const Settings: React.FC<SettingsProps> = ({
+    fallDetectionEnabled,
+    onToggleFallDetection,
+    onSendTestMessage,
+    initialAction,
+    onActionHandled
+}) => {
     // Peer & UI State
     const [peerCount, setPeerCount] = useState(0);
     const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
@@ -50,6 +58,128 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 10));
     };
 
+    const stopScanning = async () => {
+        if (scannerObject) { try { await scannerObject.stop(); await scannerObject.clear(); setScannerObject(null); } catch (e) { } }
+        setShowScanner(false);
+    };
+
+    const handleReset = () => {
+        setState('IDLE');
+        setStatusMessage('');
+        setActiveSignal('');
+        setShowModal(false);
+        setScanError('');
+        setManualMode(false);
+        stopScanning();
+        addLog('Handshake Reset');
+    };
+
+    const handleStartInitiation = () => {
+        handleReset();
+        setState('GENERATING');
+        setStatusMessage('Gathering Paths...');
+        addLog('Searching for Local IP Paths...');
+        p2pMesh.initiateConnection();
+    };
+
+    const processSignal = (text: string) => {
+        try {
+            const signal = p2pMesh.expandSignal(text);
+            if (!signal) {
+                addLog('Error: Signal expansion failed');
+                setScanError('Invalid QR Code Format');
+                return;
+            }
+
+            const currentState = stateRef.current;
+            addLog(`Signal: ${signal.type.toUpperCase()} (State: ${currentState})`);
+
+            if (signal.type === 'offer') {
+                // If we receive an offer, we must act as a Responder
+                if (currentState === 'IDLE' || currentState === 'PROCESSING_SCAN' || currentState === 'SHOWING_ANSWER') {
+                    if (currentState === 'PROCESSING_SCAN' || currentState === 'SHOWING_ANSWER') {
+                        addLog('Info: Already processing/showing an answer');
+                        return;
+                    }
+
+                    addLog('Offer received, generating response...');
+                    setState('PROCESSING_SCAN');
+                    setStatusMessage('Generating Response...');
+                    stopScanning();
+
+                    setTimeout(() => {
+                        addLog('Creating responder peer...');
+                        p2pMesh.receiveConnection(signal);
+                    }, 100);
+                } else {
+                    addLog('Error: Initiator cannot scan another offer');
+                    setScanError('Please wait for the peer to scan your offer');
+                }
+            } else if (signal.type === 'answer') {
+                // If we receive an answer, we must act as an Initiator
+                if (currentState === 'SCANNING_ANSWER' || currentState === 'SHOWING_OFFER' || currentState === 'IDLE') {
+                    addLog('Answer received, completing handshake...');
+                    p2pMesh.completeHandshake(signal);
+                    setState('CONNECTING');
+                    setStatusMessage('Establishing Secure Link...');
+                    stopScanning();
+
+                    // Safety timeout
+                    setTimeout(() => {
+                        if (stateRef.current === 'CONNECTING') {
+                            addLog('Connection timeout - resetting');
+                            handleReset();
+                        }
+                    }, 15000);
+                } else {
+                    addLog('Error: Responder cannot scan an answer');
+                    setScanError('Please scan the initiator code first');
+                }
+            }
+        } catch (err) {
+            console.error('[Settings] Signal processing error:', err);
+            addLog('Critical error during signal processing');
+            setScanError('Handshake Failed');
+        }
+    };
+
+    const handleScanResult = async (decodedText: string) => {
+        if (showModal || stateRef.current === 'CONNECTING' || stateRef.current === 'SHOWING_ANSWER') return;
+        addLog(`QR Decoded (${decodedText.length} chars)`);
+        processSignal(decodedText);
+    };
+
+    const handleManualSubmit = () => {
+        if (!manualInput) return;
+        processSignal(manualInput);
+        setManualInput('');
+        setManualMode(false);
+    };
+
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        addLog('Copied to clipboard');
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const html5QrCode = new Html5Qrcode("reader");
+        try {
+            const decodedText = await html5QrCode.scanFile(file, true);
+            handleScanResult(decodedText);
+        } catch (err) { setScanError('File Error'); }
+    };
+
+    const switchCamera = async () => {
+        if (!scannerObject || cameras.length < 2) return;
+        const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
+        const nextId = cameras[(currentIndex + 1) % cameras.length].id;
+        setSelectedCameraId(nextId);
+        await scannerObject.stop();
+        startScanning();
+    };
+
     // 1. Initial Listeners
     useEffect(() => {
         p2pMesh.onPeerCountChanged(() => {
@@ -58,7 +188,10 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             if (p2pMesh.getPeerCount() > 0) {
                 addLog('Pairing Successful!');
                 setStatusMessage('Connected!');
-                setTimeout(() => setStatusMessage(''), 3000);
+                setTimeout(() => {
+                    setStatusMessage('');
+                    handleReset();
+                }, 3000);
             }
         });
 
@@ -96,7 +229,17 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
         setPeerCount(p2pMesh.getPeerCount());
         setConnectedPeers(p2pMesh.getConnectedPeerIds());
-    }, []);
+
+        // Handle initial actions from dashboard
+        if (initialAction === 'generate') {
+            handleStartInitiation();
+            if (onActionHandled) onActionHandled();
+        } else if (initialAction === 'scan') {
+            handleReset();
+            setShowScanner(true);
+            if (onActionHandled) onActionHandled();
+        }
+    }, [initialAction, onActionHandled]);
 
     // 2. Camera Discovery
     useEffect(() => {
@@ -120,124 +263,6 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             await html5QrCode.start(selectedCameraId, { fps: 60, qrbox: { width: 250, height: 250 } } as any, handleScanResult, () => { });
             addLog('Scanner Active');
         } catch (err) { setScanError('Camera Init Failure'); }
-    };
-
-    const stopScanning = async () => {
-        if (scannerObject) { try { await scannerObject.stop(); await scannerObject.clear(); setScannerObject(null); } catch (e) { } }
-        setShowScanner(false);
-    };
-
-    const handleScanResult = async (decodedText: string) => {
-        addLog(`QR Decoded (${decodedText.length} chars)`);
-        processSignal(decodedText);
-    };
-
-    const processSignal = (text: string) => {
-        try {
-            addLog(`Processing signal (${text.length} chars)`);
-            const signal = p2pMesh.expandSignal(text);
-            if (!signal) {
-                addLog('Error: Signal expansion failed');
-                setScanError('Invalid QR Code Format');
-                return;
-            }
-
-            const currentState = stateRef.current;
-            addLog(`Current state: ${currentState}, Signal type: ${signal.type}`);
-
-            if (currentState === 'IDLE' || currentState === 'PROCESSING_SCAN') {
-                if (signal.type !== 'offer') {
-                    addLog('Error: Expected offer but got different type');
-                    setScanError('Please scan the initiator offer first');
-                    return;
-                }
-                addLog('Offer received, generating response...');
-                setState('PROCESSING_SCAN');
-                setStatusMessage('Generating Response...');
-                stopScanning();
-
-                setTimeout(() => {
-                    addLog('Creating responder peer...');
-                    p2pMesh.receiveConnection(signal);
-                }, 100);
-            } else if (currentState === 'SCANNING_ANSWER' || currentState === 'SHOWING_OFFER') {
-                if (signal.type !== 'answer') {
-                    addLog('Error: Expected answer but got different type');
-                    setScanError('Expected answer QR code');
-                    return;
-                }
-                addLog('Answer received, completing handshake...');
-                p2pMesh.completeHandshake(signal);
-                setState('CONNECTING');
-                setStatusMessage('Establishing Secure Link...');
-                stopScanning();
-
-                // Safety timeout
-                setTimeout(() => {
-                    if (stateRef.current === 'CONNECTING') {
-                        addLog('Connection timeout - resetting');
-                        handleReset();
-                    }
-                }, 15000);
-            } else {
-                addLog(`Unexpected signal in state: ${currentState}`);
-                setScanError('Unexpected handshake state');
-            }
-        } catch (err) {
-            console.error('[Settings] Signal processing error:', err);
-            addLog('Critical error during signal processing');
-            setScanError('Handshake Failed');
-        }
-    };
-
-    const handleManualSubmit = () => {
-        if (!manualInput) return;
-        processSignal(manualInput);
-        setManualInput('');
-        setManualMode(false);
-    };
-
-    const copyToClipboard = (text: string) => {
-        navigator.clipboard.writeText(text);
-        addLog('Copied to clipboard');
-    };
-
-    const handleStartInitiation = () => {
-        handleReset();
-        setState('GENERATING');
-        setStatusMessage('Gathering Paths...');
-        addLog('Searching for Local IP Paths...');
-        p2pMesh.initiateConnection();
-    };
-
-    const handleReset = () => {
-        setState('IDLE');
-        setStatusMessage('');
-        setActiveSignal('');
-        setShowModal(false);
-        setScanError('');
-        setManualMode(false);
-        stopScanning();
-        addLog('Handshake Reset');
-    };
-
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const html5QrCode = new Html5Qrcode("reader");
-        try {
-            const decodedText = await html5QrCode.scanFile(file, true);
-            handleScanResult(decodedText);
-        } catch (err) { setScanError('File Error'); }
-    };
-
-    const switchCamera = async () => {
-        if (!scannerObject || cameras.length < 2) return;
-        const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
-        const nextId = cameras[(currentIndex + 1) % cameras.length].id;
-        setSelectedCameraId(nextId);
-        await scannerObject.stop();
-        startScanning();
     };
 
     return (

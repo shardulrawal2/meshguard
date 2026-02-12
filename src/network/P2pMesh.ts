@@ -60,7 +60,7 @@ export class P2pMesh {
     private handleBroadcastMessage(event: MessageEvent) {
         const { type, sender, target, signal } = event.data;
         if (sender === this.myId || (target && target !== this.myId)) return;
-        
+
         try {
             if (type === 'presence' && !this.peers.has(sender)) {
                 console.log('[P2pMesh] Auto-discovery: Creating peer for', sender);
@@ -162,17 +162,17 @@ export class P2pMesh {
 
     private minifySignal(signal: any): string {
         const type = signal.type === 'offer' ? '1' : '2';
-        if (!signal.sdp) return LZString.compressToEncodedURIComponent(type);
-        const lines = signal.sdp.split('\r\n');
-        const getValue = (pre: string) => (lines.find((l: any) => l.startsWith(pre)) || '').substring(pre.length).trim();
+        const packed: any = { t: type };
 
-        const packed = {
-            t: type,
-            u: getValue('a=ice-ufrag:'),
-            p: getValue('a=ice-pwd:'),
-            f: getValue('a=fingerprint:').split(' ')[1] || '',
-            c: lines.filter((l: any) => l.startsWith('a=candidate:')).slice(0, 4).map((l: any) => l.replace('a=candidate:', '').trim()).join(';')
-        };
+        if (signal.sdp) {
+            const lines = signal.sdp.split('\r\n');
+            const getValue = (pre: string) => (lines.find((l: any) => l.startsWith(pre)) || '').substring(pre.length).trim();
+
+            packed.u = getValue('a=ice-ufrag:');
+            packed.p = getValue('a=ice-pwd:');
+            packed.f = (getValue('a=fingerprint:').split(' ')[1] || '');
+            packed.c = lines.filter((l: any) => l.startsWith('a=candidate:')).slice(0, 4).map((l: any) => l.replace('a=candidate:', '').trim()).join(';');
+        }
         return LZString.compressToEncodedURIComponent(JSON.stringify(packed));
     }
 
@@ -180,34 +180,50 @@ export class P2pMesh {
         try {
             const json = LZString.decompressFromEncodedURIComponent(compressed);
             if (!json) return null;
-            const packed = JSON.parse(json);
+
+            let packed: any;
+            try {
+                packed = JSON.parse(json);
+            } catch (e) {
+                // Backward compatibility for single character signal
+                packed = { t: json };
+            }
+
             const isOffer = packed.t === '1' || packed.type === 'offer';
 
             if (packed.u) {
                 const candidates = (packed.c || '').split(';');
-                const parts = (candidates[0] || '').split(' ');
+                const firstCandidate = candidates[0] || '';
+                const parts = firstCandidate.split(' ');
                 const ipVer = parts[5] === 'IP6' ? '6' : '4';
                 const cLineIp = parts[4] || '0.0.0.0';
 
+                // Robust SDP reconstruction with standard headers
                 const sdp = [
                     'v=0',
-                    `o=- ${Date.now()} 1 IN IP4 127.0.0.1`,
-                    's=-', 't=0 0',
+                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP4 127.0.0.1`,
+                    's=-',
+                    't=0 0',
+                    'a=msid-semantic: WMS',
                     'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
                     `c=IN IP${ipVer} ${cLineIp}`,
                     `a=ice-ufrag:${packed.u}`,
                     `a=ice-pwd:${packed.p}`,
                     `a=fingerprint:sha-256 ${packed.f}`,
                     `a=setup:${isOffer ? 'actpass' : 'active'}`,
-                    'a=mid:data', 'a=rtcp-mux', 'a=rtcp-rsize',
+                    'a=mid:0',
                     'a=sctp-port:5000',
                     'a=max-message-size:262144',
                     ...candidates.filter((c: string) => c.trim()).map((c: string) => `a=candidate:${c}`)
-                ].filter(line => line && !line.includes('a=sctpmap:')).join('\r\n') + '\r\n';
+                ].join('\r\n') + '\r\n';
+
                 return { type: isOffer ? 'offer' : 'answer', sdp };
             }
             return { type: isOffer ? 'offer' : 'answer', sdp: '' };
-        } catch (e) { return null; }
+        } catch (e) {
+            console.error('[P2pMesh] Expand signal error:', e);
+            return null;
+        }
     }
 
     private async handleIncomingMessage(message: SOSMessage, fromPeerId: string) {
@@ -217,15 +233,15 @@ export class P2pMesh {
                 console.log('[P2pMesh] Duplicate message ignored:', message.id);
                 return;
             }
-            
+
             message.status = 'received';
             await offlineStorage.saveMessage(message);
-            
+
             console.log('[P2pMesh] New message received:', message.id);
             this.onMessageCallbacks.forEach(cb => {
                 try { cb(message); } catch (err) { console.error('[P2pMesh] Callback error:', err); }
             });
-            
+
             // Relay to mesh if within hop limit
             if (message.hops < 5) {
                 this.broadcast(message, [fromPeerId]);
@@ -239,7 +255,7 @@ export class P2pMesh {
         const payload = JSON.stringify({ ...message, hops: (message.hops || 0) + 1 });
         let successCount = 0;
         let failCount = 0;
-        
+
         this.peers.forEach((peer, id) => {
             if (!exclude.includes(id)) {
                 try {
@@ -255,7 +271,7 @@ export class P2pMesh {
                 }
             }
         });
-        
+
         console.log(`[P2pMesh] Broadcast: ${successCount} sent, ${failCount} failed`);
     }
 
