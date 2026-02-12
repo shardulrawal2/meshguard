@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import type { SOSMessage } from '../types/sos';
 import { offlineStorage } from '../services/OfflineStorage';
 import { p2pMesh } from '../network/P2pMesh';
-import { bluetoothService } from '../network/BluetoothService';
 
 export const useSOS = () => {
     const [messages, setMessages] = useState<SOSMessage[]>([]);
@@ -21,12 +20,6 @@ export const useSOS = () => {
             setMessages(prev => [msg, ...prev]);
         });
 
-        // Bluetooth Mesh listener
-        bluetoothService.onMessage((msg) => {
-            setMessages(prev => [msg, ...prev]);
-            // Re-relay via WebRTC mesh
-            p2pMesh.broadcast(msg);
-        });
 
         const handleStatus = () => setIsOnline(navigator.onLine);
         window.addEventListener('online', handleStatus);
@@ -68,7 +61,6 @@ export const useSOS = () => {
 
         // Attempt broadcast
         p2pMesh.broadcast(message);
-        bluetoothService.broadcast(message);
 
         return message;
     };
