@@ -255,13 +255,16 @@ export class P2pMesh {
             .slice(0, 4)
             .map((c: string) => c.replace('a=candidate:', '').trim());
 
-        // Use a compact Key-Value format
+        const isOffer = type === '1';
+
+        // Use a compact Key-Value format (v6.3 - Hyper-Resilient)
         const packed = {
             t: type,
             u: ufrag,
             p: pwd,
             a: fingerprintAlg,
             f: fingerprint,
+            s: isOffer ? 'actpass' : 'active', // Legacy support
             c: candidates.join(';')
         };
 
@@ -274,10 +277,15 @@ export class P2pMesh {
             if (!json) return null;
 
             const packed = JSON.parse(json);
-            const { t, u, p, a, f, c } = packed;
+            const { t, u, p, a, f, c, s } = packed;
+
+            // Hyper-Defensive Extraction (v6.3)
+            const typeStr = (t || packed.type || '1').toString();
+            const isOffer = typeStr === '1' || typeStr === 'offer';
+            const setupValue = s || packed.setup || (isOffer ? 'actpass' : 'active');
 
             const signal: any = {
-                type: t === '1' ? 'offer' : 'answer',
+                type: isOffer ? 'offer' : 'answer',
                 sdp: ''
             };
 
@@ -286,10 +294,8 @@ export class P2pMesh {
                 const firstCand = candidates[0] || '';
                 const parts = firstCand.split(' ');
 
-                // Detection for IP version mismatch (v5.3 logic)
                 const ipVer = parts.length > 5 && parts[5] === 'IP6' ? '6' : '4';
                 const cLineIp = parts.length > 4 ? parts[4] : '0.0.0.0';
-                const isOffer = t === '1';
 
                 const sdpLines = [
                     'v=0',
@@ -302,7 +308,7 @@ export class P2pMesh {
                     `a=ice-ufrag:${u}`,
                     `a=ice-pwd:${p}`,
                     `a=fingerprint:${a || 'sha-256'} ${f}`,
-                    `a=setup:${isOffer ? 'actpass' : 'active'}`,
+                    `a=setup:${setupValue}`,
                     'a=mid:0',
                     'a=rtcp-mux',
                     'a=rtcp-rsize',

@@ -127,7 +127,11 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     const processSignal = (text: string) => {
         try {
             const signal = p2pMesh.expandSignal(text);
-            if (!signal) { setScanError('Invalid Signal Format'); return; }
+            if (!signal) {
+                addLog('Error: Expansion Failed (Incompatible QR)');
+                setScanError('Incompatible QR Format');
+                return;
+            }
 
             if (stateRef.current === 'IDLE' || stateRef.current === 'PROCESSING_SCAN') {
                 if (signal.type !== 'offer') { setScanError('Scan Initiator Offer first'); return; }
