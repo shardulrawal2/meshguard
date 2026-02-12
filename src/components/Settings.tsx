@@ -84,6 +84,9 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         connectionStageRef.current = connectionStage;
     }, [connectionStage]);
 
+    // Track signals the user explicitly denied to prevent immediate re-triggering
+    const deniedSignalsRef = React.useRef<Set<string>>(new Set());
+
 
     const handleScanResult = (decodedText: string) => {
         try {
@@ -98,6 +101,12 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
             const signal = JSON.parse(signalString);
             const currentStage = connectionStageRef.current;
+
+            // IGNORE if this specific signal was recently denied
+            const sigStr = JSON.stringify(signal);
+            if (deniedSignalsRef.current.has(sigStr)) {
+                return;
+            }
 
             if (signal.type === 'offer') {
                 // GUARD: Only accept offers if we are completely idle. 
@@ -181,6 +190,14 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     }
 
     const handleDenyConnection = () => {
+        if (pendingOffer) {
+            // Temporarily ignore this specific signal to prevent re-trigger flicker
+            const sigStr = JSON.stringify(pendingOffer);
+            deniedSignalsRef.current.add(sigStr);
+            setTimeout(() => {
+                deniedSignalsRef.current.delete(sigStr);
+            }, 5000); // 5 second cooldown
+        }
         setPendingOffer(null);
         setConnectionStage('idle');
     };
