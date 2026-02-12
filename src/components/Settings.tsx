@@ -3,7 +3,7 @@ import { Settings as SettingsIcon, Bell, Shield, Info, Radio, QrCode, Camera, X,
 import { p2pMesh } from '../network/P2pMesh';
 // import { bluetoothService } from '../network/BluetoothService';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 
 interface SettingsProps {
     fallDetectionEnabled: boolean;
@@ -16,6 +16,10 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     const [showQr, setShowQr] = useState(false);
     const [showScanner, setShowScanner] = useState(false);
     const [scanError, setScanError] = useState('');
+    const [cameras, setCameras] = useState<Array<{ id: string; label: string }>>([]);
+    const [selectedCameraId, setSelectedCameraId] = useState<string>('');
+    const [scannerObject, setScannerObject] = useState<Html5Qrcode | null>(null);
+
     const [isCameraBlocked, setIsCameraBlocked] = useState(false);
     const [isReconnecting, setIsReconnecting] = useState(false);
     const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
@@ -37,42 +41,20 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         setConnectedPeers(p2pMesh.getConnectedPeerIds());
     }, []);
 
+    // Fetch cameras on mount
     useEffect(() => {
-        if (showScanner) {
-            const scanner = new Html5QrcodeScanner(
-                "reader",
-                {
-                    fps: 10,
-                    qrbox: { width: 250, height: 250 },
-                    showTorchButtonIfSupported: true,
-                },
-                /* verbose= */ false
-            );
-
-            scanner.render((decodedText) => {
-                try {
-                    const signal = JSON.parse(decodedText);
-                    p2pMesh.receiveConnection(signal);
-                    scanner.clear();
-                    setShowScanner(false);
-                    setScanError('');
-                } catch (err) {
-                    setScanError('Invalid QR Code - Not a MeshGuard sync code');
-                }
-            }, (err) => {
-                if (err?.includes('permission') || err?.includes('secure context')) {
-                    setIsCameraBlocked(true);
-                }
-                if (err?.includes('NotFoundException')) {
-                    setScanError('Cannot detect QR code. Try: Upload QR Photo instead, or adjust lighting/distance');
-                }
-            });
-
-            return () => {
-                scanner.clear().catch(console.error);
-            };
-        }
-    }, [showScanner]);
+        Html5Qrcode.getCameras().then(devices => {
+            if (devices && devices.length) {
+                setCameras(devices.map(d => ({ id: d.id, label: d.label })));
+                // Default to back camera if available, otherwise first one
+                const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
+                setSelectedCameraId(backCamera ? backCamera.id : devices[0].id);
+            }
+        }).catch(err => {
+            console.error('Error getting cameras', err);
+            setIsCameraBlocked(true);
+        });
+    }, []);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -95,8 +77,107 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         setShowQr(true);
     };
 
+    const startScanning = async () => {
+        if (!selectedCameraId) return;
+
+        const html5QrCode = new Html5Qrcode("reader");
+        setScannerObject(html5QrCode);
+
+        try {
+            await html5QrCode.start(
+                selectedCameraId,
+                {
+                    fps: 15, // Higher FPS for faster scanning
+                    qrbox: { width: 300, height: 300 }, // Larger scanning area
+                    aspectRatio: 1.0
+                },
+                (decodedText) => {
+                    // Success callback
+                    try {
+                        const signal = JSON.parse(decodedText);
+                        p2pMesh.receiveConnection(signal);
+
+                        // Stop scanning immediately on success
+                        html5QrCode.stop().then(() => {
+                            html5QrCode.clear();
+                            setScannerObject(null);
+                            setShowScanner(false);
+                            alert('⚡ INSTANT CONNECT: Peer Linked!');
+                        });
+                        setScanError('');
+                    } catch (err) {
+                        // Ignore non-JSON QR codes (likely not ours)
+                    }
+                },
+                () => {
+                    // Ignore scan errors as they happen every frame
+                }
+            );
+        } catch (err) {
+            console.error("Error starting scanner", err);
+            setScanError('Failed to start camera. ensuring HTTPS?');
+        }
+    };
+
+    const stopScanning = async () => {
+        if (scannerObject) {
+            try {
+                await scannerObject.stop();
+                await scannerObject.clear();
+                setScannerObject(null);
+            } catch (err) {
+                console.error("Error stopping scanner", err);
+            }
+        }
+        setShowScanner(false);
+    };
+
+    const switchCamera = async () => {
+        if (!scannerObject || cameras.length < 2) return;
+
+        // Find next camera index
+        const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
+        const nextIndex = (currentIndex + 1) % cameras.length;
+        const nextCameraId = cameras[nextIndex].id;
+
+        setSelectedCameraId(nextCameraId);
+
+        // Restart scanner with new camera
+        await scannerObject.stop();
+        await scannerObject.start(
+            nextCameraId,
+            {
+                fps: 15,
+                qrbox: { width: 300, height: 300 },
+                aspectRatio: 1.0
+            },
+            (decodedText) => {
+                try {
+                    const signal = JSON.parse(decodedText);
+                    p2pMesh.receiveConnection(signal);
+                    scannerObject.stop().then(() => {
+                        scannerObject.clear();
+                        setScannerObject(null);
+                        setShowScanner(false);
+                        alert('⚡ INSTANT CONNECT: Peer Linked!');
+                    });
+                } catch (err) { }
+            },
+            () => { }
+        );
+    };
+
+    // Auto-start scanning when modal opens
+    useEffect(() => {
+        if (showScanner && selectedCameraId && !scannerObject) {
+            startScanning();
+        }
+    }, [showScanner, selectedCameraId]);
+
+
     return (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {/* ... header code ... */}
             <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-blue-500/10 rounded-xl">
@@ -265,39 +346,63 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             {/* Scanner Modal */}
             {showScanner && (
                 <div className="fixed inset-0 bg-slate-950 z-[100] flex flex-col items-center justify-center p-6 animate-in slide-in-from-bottom-4 duration-500">
-                    <div className="w-full max-w-md space-y-8">
+                    <div className="w-full max-w-md space-y-6">
                         <div className="flex items-center justify-between">
                             <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Scanning...</h3>
                             <button
-                                onClick={() => setShowScanner(false)}
-                                className="p-3 bg-slate-900 rounded-2xl text-slate-400 border border-white/5"
+                                onClick={stopScanning}
+                                className="p-3 bg-slate-900 rounded-2xl text-slate-400 border border-white/5 active:scale-95 transition-transform"
                             >
                                 <X className="w-6 h-6" />
                             </button>
                         </div>
-                        <div id="reader" className="overflow-hidden rounded-[2.5rem] border-4 border-indigo-500/30 shadow-2xl shadow-indigo-500/10 bg-slate-900/50 min-h-[300px] flex items-center justify-center">
+
+                        <div className="relative overflow-hidden rounded-[2.5rem] border-4 border-indigo-500/30 shadow-2xl shadow-indigo-500/10 bg-slate-900/50 aspect-square flex items-center justify-center group">
+                            <div id="reader" className="w-full h-full object-cover" />
+
+                            {/* Scanner Reticle Overlay */}
+                            <div className="absolute inset-0 pointer-events-none">
+                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-2 border-indigo-400/50 rounded-3xl">
+                                    <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-indigo-500 rounded-tl-xl" />
+                                    <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-indigo-500 rounded-tr-xl" />
+                                    <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-indigo-500 rounded-bl-xl" />
+                                    <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-indigo-500 rounded-br-xl" />
+                                    <div className="absolute inset-0 bg-indigo-500/5 animate-pulse" />
+                                </div>
+                            </div>
+
+                            {/* Camera Switch Button - Visible only if multiple cameras */}
+                            {cameras.length > 1 && (
+                                <button
+                                    onClick={switchCamera}
+                                    className="absolute bottom-6 right-6 p-4 bg-slate-900/80 backdrop-blur-md text-white rounded-full border border-white/10 shadow-lg active:scale-90 transition-transform z-10"
+                                >
+                                    <Camera className="w-6 h-6" />
+                                </button>
+                            )}
+
                             {isCameraBlocked && (
-                                <div className="p-8 text-center space-y-4">
-                                    <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto text-red-500">
-                                        <Camera className="w-8 h-8" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <p className="font-bold text-red-400">Camera Access Blocked</p>
-                                        <p className="text-xs text-slate-500 leading-relaxed px-4">
-                                            Browsers block camera on local IPs for security.
-                                            Use the **Image Sync** below or enable **Chrome Flags**.
-                                        </p>
+                                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/90 backdrop-blur-sm z-20">
+                                    <div className="p-8 text-center space-y-4">
+                                        <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto text-red-500">
+                                            <Camera className="w-8 h-8" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <p className="font-bold text-red-400">Camera Access Blocked</p>
+                                            <p className="text-xs text-slate-500 leading-relaxed px-4">
+                                                Browsers block camera on local IPs. Use "Upload QR Photo" below.
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
                             )}
                         </div>
 
                         <div className="grid grid-cols-1 gap-4">
-                            <label className="flex items-center justify-center gap-3 p-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl transition-all cursor-pointer active:scale-95 shadow-lg shadow-indigo-900/20">
-                                <QrCode className="w-8 h-8" />
+                            <label className="flex items-center justify-center gap-3 p-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl transition-all cursor-pointer active:scale-95 shadow-lg shadow-indigo-900/20">
+                                <QrCode className="w-6 h-6" />
                                 <div className="text-left">
                                     <span className="block text-xs font-black uppercase tracking-widest">Upload QR Photo</span>
-                                    <span className="block text-[10px] opacity-70">Works even if camera is blocked</span>
                                 </div>
                                 <input
                                     type="file"
@@ -306,18 +411,6 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                                     onChange={handleFileUpload}
                                 />
                             </label>
-
-                            {isCameraBlocked && (
-                                <div className="p-6 bg-slate-900/50 border border-white/5 rounded-3xl space-y-3">
-                                    <div className="flex items-center gap-2 text-indigo-400">
-                                        <Info className="w-4 h-4" />
-                                        <span className="text-[10px] font-black uppercase tracking-widest">Dev Tip: Enable Camera</span>
-                                    </div>
-                                    <p className="text-[10px] text-slate-500 leading-relaxed">
-                                        To enable camera, go to <code className="text-indigo-300">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code> and add your computer's IP: <code className="text-indigo-300">http://{window.location.host}</code>
-                                    </p>
-                                </div>
-                            )}
                         </div>
 
                         {scanError && <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl text-red-500 text-xs font-bold text-center animate-bounce">{scanError}</div>}
