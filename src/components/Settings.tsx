@@ -65,16 +65,18 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             setScanError(err);
         });
 
-        p2pMesh.onSignal((signal) => {
-            const isOffer = signal.startsWith('1') || p2pMesh.expandSignal(signal)?.type === 'offer';
-            addLog(`Signal Ready: ${isOffer ? 'OFFER' : 'ANSWER'} (${signal.length}c)`);
-            setActiveSignal(signal);
+        p2pMesh.onSignal((compressed) => {
+            const expanded = p2pMesh.expandSignal(compressed);
+            if (!expanded) return;
 
-            // Permissive state check: If we have an answer, show it regardless if we just started processing
-            if (isOffer) {
+            const isOffer = expanded.type === 'offer';
+            addLog(`Signal Ready: ${isOffer ? 'OFFER' : 'ANSWER'} (${compressed.length}c)`);
+            setActiveSignal(compressed);
+
+            if (isOffer && (stateRef.current === 'GENERATING' || stateRef.current === 'IDLE')) {
                 setState('SHOWING_OFFER');
                 setShowModal(true);
-            } else {
+            } else if (!isOffer && stateRef.current === 'PROCESSING_SCAN') {
                 setState('SHOWING_ANSWER');
                 setShowModal(true);
                 setStatusMessage('Response Generated');
