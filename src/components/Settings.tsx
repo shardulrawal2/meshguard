@@ -92,20 +92,34 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             const signal = JSON.parse(signalString);
 
             if (signal.type === 'offer') {
+                // GUARD: Only accept offers if we are completely idle. 
+                if (connectionStage !== 'idle') {
+                    console.log('Ignoring offer signal because stage is NOT idle:', connectionStage);
+                    return;
+                }
+
                 // I am the Receiver
                 setPendingOffer(signal);
                 setConnectionStage('pending-acceptance');
-                stopScanning(); // Stop scanner to show acceptance prompt
+                stopScanning();
             } else if (signal.type === 'answer') {
+                // GUARD: Only accept answers if we are the initiator (showing-offer)
+                if (connectionStage !== 'showing-offer') {
+                    console.log('Ignoring answer signal because stage is NOT showing-offer:', connectionStage);
+                    return;
+                }
+
                 // I am the Initiator completing the loop
                 p2pMesh.completeHandshake(signal);
                 stopScanning();
                 alert('✅ CONNECTION ESTABLISHED! You are now linked.');
                 setConnectionStage('idle');
             } else {
-                // Handle legacy/other signals or invalid codes
-                p2pMesh.receiveConnection(signal); // Fallback
-                stopScanning();
+                // Fallback for legacy
+                if (connectionStage === 'idle') {
+                    p2pMesh.receiveConnection(signal);
+                    stopScanning();
+                }
             }
         } catch (err) {
             // Ignore noise
