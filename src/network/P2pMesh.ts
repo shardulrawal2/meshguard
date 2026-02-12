@@ -276,8 +276,8 @@ export class P2pMesh {
                     'o=- 0 0 IN IP4 127.0.0.1',
                     's=-',
                     't=0 0',
-                    'a=msid-semantic: WMS',
-                    'm=application 9 DTLS/SCTP 5000',
+                    'a=group:BUNDLE 0',
+                    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
                     'c=IN IP4 0.0.0.0',
                     `a=ice-ufrag:${u}`,
                     `a=ice-pwd:${p}`,
@@ -288,7 +288,8 @@ export class P2pMesh {
                     `a=max-message-size:262144`,
                     ...candidates.map((cand: string) => `a=candidate:${cand}`)
                 ];
-                signal.sdp = sdpLines.join('\r\n') + '\r\n';
+                // CRITICAL: Ensure no trailing space or hidden conflicting lines
+                signal.sdp = sdpLines.map(l => l.trim()).filter(Boolean).join('\r\n') + '\r\n';
             }
             return signal;
         } catch (e) {
