@@ -134,6 +134,14 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 setState('CONNECTING');
                 setStatusMessage('Connecting...');
                 stopScanning();
+
+                // Safety: Reset if connection takes > 15 seconds
+                setTimeout(() => {
+                    if (stateRef.current === 'CONNECTING') {
+                        addLog('Connection Timed Out. Retrying...');
+                        handleReset();
+                    }
+                }, 15000);
             }
         } catch (err) { setScanError('Handshake Error'); }
     };
@@ -293,7 +301,11 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                                 <button onClick={() => { setShowModal(false); setState('SCANNING_ANSWER'); setShowScanner(true); }} className="p-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-indigo-200">
                                     <Camera className="w-4 h-4" /> Next Step
                                 </button>
-                            ) : <div className="p-4 bg-indigo-100 text-indigo-600 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2">Ready</div>}
+                            ) : (
+                                <button onClick={() => { setShowModal(false); }} className="p-4 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-green-200">
+                                    <CheckCircle2 className="w-4 h-4" /> Ready & Waiting
+                                </button>
+                            )}
                             <button onClick={handleReset} className="col-span-2 flex items-center gap-2 mx-auto text-[10px] font-black text-slate-400 uppercase tracking-widest opacity-50 hover:opacity-100 transition-all">
                                 <RotateCcw className="w-3 h-3" /> Reset Handshake
                             </button>

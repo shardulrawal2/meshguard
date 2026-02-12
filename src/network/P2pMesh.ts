@@ -276,10 +276,9 @@ export class P2pMesh {
                 const candidates = c ? c.split(';') : [];
                 const sdpLines = [
                     'v=0',
-                    'o=- 0 0 IN IP4 127.0.0.1',
+                    `o=- ${Math.floor(Date.now() / 1000)} 2 IN IP4 127.0.0.1`,
                     's=-',
                     't=0 0',
-                    'a=msid-semantic: WMS',
                     'm=application 9 DTLS/SCTP 5000',
                     'c=IN IP4 0.0.0.0',
                     `a=ice-ufrag:${u}`,
