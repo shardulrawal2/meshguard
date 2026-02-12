@@ -213,7 +213,7 @@ export class P2pMesh {
         }
     }
 
-    // ULTRA-MICRO SDP MINIFICATION (Positional Format)
+    // MICRO-LINK v5: Robust Key-Value SDP Compression
     private minifySignal(signal: any): string {
         const type = signal.type === 'offer' ? '1' : '2';
         if (!signal.sdp) return LZString.compressToEncodedURIComponent(type);
@@ -227,32 +227,42 @@ export class P2pMesh {
 
         const ufrag = getValue('a=ice-ufrag:');
         const pwd = getValue('a=ice-pwd:');
-        const fingerprint = getValue('a=fingerprint:').split(' ')[1] || ''; // sha-256 XX:XX...
+        const fingerprint = getValue('a=fingerprint:').split(' ')[1] || '';
         const setup = getValue('a=setup:');
 
-        // Only keep the FIRST host candidate to save space
-        const candidateLine = lines.find((l: string) => l.startsWith('a=candidate:') && l.includes('typ host'));
-        const candidate = candidateLine ? candidateLine.replace('a=candidate:', '') : '';
+        // Keep ALL host candidates (IPv4/IPv6) for multi-network reliability
+        const candidates = lines
+            .filter((l: string) => l.startsWith('a=candidate:') && l.includes('typ host'))
+            .map((c: string) => c.replace('a=candidate:', '').trim());
 
-        // Format: type,ufrag,pwd,fingerprint,setup,candidate
-        const packed = [type, ufrag, pwd, fingerprint, setup, candidate].join(',');
-        return LZString.compressToEncodedURIComponent(packed);
+        // Use a compact Key-Value format
+        const packed = {
+            t: type,
+            u: ufrag,
+            p: pwd,
+            f: fingerprint,
+            s: setup,
+            c: candidates.join(';')
+        };
+
+        return LZString.compressToEncodedURIComponent(JSON.stringify(packed));
     }
 
     public expandSignal(compressed: string): any {
         try {
-            const packed = LZString.decompressFromEncodedURIComponent(compressed);
-            if (!packed) return null;
+            const json = LZString.decompressFromEncodedURIComponent(compressed);
+            if (!json) return null;
 
-            const parts = packed.split(',');
-            const [type, ufrag, pwd, fingerprint, setup, candidate] = parts;
+            const packed = JSON.parse(json);
+            const { t, u, p, f, s, c } = packed;
 
             const signal: any = {
-                type: type === '1' ? 'offer' : 'answer',
+                type: t === '1' ? 'offer' : 'answer',
                 sdp: ''
             };
 
-            if (ufrag) {
+            if (u) {
+                const candidates = c ? c.split(';') : [];
                 const sdpLines = [
                     'v=0',
                     'o=- 0 0 IN IP4 127.0.0.1',
@@ -261,15 +271,15 @@ export class P2pMesh {
                     'a=msid-semantic: WMS',
                     'm=application 9 DTLS/SCTP 5000',
                     'c=IN IP4 0.0.0.0',
-                    `a=ice-ufrag:${ufrag}`,
-                    `a=ice-pwd:${pwd}`,
-                    `a=fingerprint:sha-256 ${fingerprint}`,
-                    `a=setup:${setup}`,
+                    `a=ice-ufrag:${u}`,
+                    `a=ice-pwd:${p}`,
+                    `a=fingerprint:sha-256 ${f}`,
+                    `a=setup:${s}`,
                     `a=mid:0`,
                     `a=sctp-port:5000`,
-                    `a=max-message-size:262144`, // Helpful for simple-peer
-                    candidate ? `a=candidate:${candidate}` : '',
-                ].filter(Boolean);
+                    `a=max-message-size:262144`,
+                    ...candidates.map((cand: string) => `a=candidate:${cand}`)
+                ];
                 signal.sdp = sdpLines.join('\r\n') + '\r\n';
             }
             return signal;

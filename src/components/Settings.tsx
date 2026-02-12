@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, Shield, Info, Radio, QrCode, Camera, X, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Settings as SettingsIcon, Shield, Info, Radio, QrCode, Camera, X, CheckCircle2, RotateCcw, AlertTriangle } from 'lucide-react';
 import { p2pMesh } from '../network/P2pMesh';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -9,73 +9,74 @@ interface SettingsProps {
     onToggleFallDetection: (val: boolean) => void;
 }
 
+// Handshake Stages for v5
+type HandshakeState =
+    | 'IDLE'
+    | 'GENERATING_OFFER'
+    | 'SHOWING_OFFER'
+    | 'SCANNING_ANSWER'
+    | 'PROCESSING_SCAN'
+    | 'SHOWING_ANSWER'
+    | 'CONNECTING';
+
 export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onToggleFallDetection }) => {
-    // Basic UI State
+    // UI & Peer State
     const [peerCount, setPeerCount] = useState(0);
-    const [showQrModal, setShowQrModal] = useState(false);
+    const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
+
+    // Handshake State Machine
+    const [state, setState] = useState<HandshakeState>('IDLE');
+    const [activeSignal, setActiveSignal] = useState('');
+    const [statusMessage, setStatusMessage] = useState('');
+    const [showModal, setShowModal] = useState(false);
+
+    // Scanner State
     const [showScanner, setShowScanner] = useState(false);
     const [scanError, setScanError] = useState('');
     const [cameras, setCameras] = useState<Array<{ id: string; label: string }>>([]);
     const [selectedCameraId, setSelectedCameraId] = useState<string>('');
     const [scannerObject, setScannerObject] = useState<Html5Qrcode | null>(null);
     const [isCameraBlocked, setIsCameraBlocked] = useState(false);
-    const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
 
-    // Handshake State
-    const [handshakeStep, setHandshakeStep] = useState<'idle' | 'generating' | 'showing-offer' | 'scanning-answer' | 'showing-answer'>('idle');
-    const [activeSignal, setActiveSignal] = useState('');
-    const [statusMessage, setStatusMessage] = useState('');
-
-    // Refs for state coordination
-    const handshakeStepRef = useRef(handshakeStep);
-    useEffect(() => { handshakeStepRef.current = handshakeStep; }, [handshakeStep]);
+    // Refs for persistent state in callbacks
+    const stateRef = useRef<HandshakeState>('IDLE');
+    useEffect(() => { stateRef.current = state; }, [state]);
 
     // Responsive QR size
     const [qrSize, setQrSize] = useState(280);
     useEffect(() => {
-        const updateSize = () => setQrSize(Math.min(window.innerWidth * 0.8, 400));
+        const updateSize = () => setQrSize(Math.min(window.innerWidth * 0.75, 400));
         updateSize();
         window.addEventListener('resize', updateSize);
         return () => window.removeEventListener('resize', updateSize);
     }, []);
 
-    // CENTRAL SIGNAL LISTENER
+    // 1. Initial Listeners
     useEffect(() => {
+        // Sync peer count
+        const updatePeers = () => {
+            setPeerCount(p2pMesh.getPeerCount());
+            setConnectedPeers(p2pMesh.getConnectedPeerIds());
+        };
+        p2pMesh.onPeerCountChanged(updatePeers);
+        updatePeers();
+
+        // Global signal listener - v5 uses a stable ref-based approach
         p2pMesh.onSignal((signal) => {
-            console.log(`[Handshake] Signal received internally: ${signal.length} chars`);
+            console.log(`[Handshake v5] Internal Signal: ${signal.length} chars (State: ${stateRef.current})`);
             setActiveSignal(signal);
 
-            // Logic: If we were "generating", we now show the result
-            if (handshakeStepRef.current === 'generating' || handshakeStepRef.current === 'idle') {
-                // If the signal is an offer (starts with 1 in decoded form), we are likely the initiator
-                // But it's safer to check the current step
-                if (handshakeStepRef.current === 'generating') {
-                    // This is the response to our trigger
-                    setHandshakeStep(prev => prev); // dummy for now, state logic below
-                }
-            }
-
-            // Automatically open modal if a signal is ready
-            setShowQrModal(true);
-            if (statusMessage === 'Generating Response...') {
-                setHandshakeStep('showing-answer');
-                setStatusMessage('');
-            } else if (handshakeStepRef.current === 'generating') {
-                setHandshakeStep('showing-offer');
+            if (stateRef.current === 'GENERATING_OFFER') {
+                setState('SHOWING_OFFER');
+                setShowModal(true);
+            } else if (stateRef.current === 'PROCESSING_SCAN') {
+                setState('SHOWING_ANSWER');
+                setShowModal(true);
             }
         });
-
-        p2pMesh.onPeerCountChanged((count) => {
-            setPeerCount(count);
-            setConnectedPeers(p2pMesh.getConnectedPeerIds());
-            if (count > peerCount) setStatusMessage('New Peer Linked!');
-        });
-
-        setPeerCount(p2pMesh.getPeerCount());
-        setConnectedPeers(p2pMesh.getConnectedPeerIds());
     }, []);
 
-    // Camera setup
+    // 2. Camera Discovery
     useEffect(() => {
         Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length) {
@@ -86,11 +87,13 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         }).catch(() => setIsCameraBlocked(true));
     }, []);
 
+    // 3. Scanner Management
     useEffect(() => {
-        if (showScanner && selectedCameraId && !scannerObject) startScanning();
+        if (showScanner && selectedCameraId && !scannerObject) {
+            startScanning();
+        }
     }, [showScanner, selectedCameraId]);
 
-    // SCANNER LOGIC
     const startScanning = async () => {
         if (!selectedCameraId) return;
         const html5QrCode = new Html5Qrcode("reader");
@@ -102,7 +105,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 handleScanResult,
                 () => { }
             );
-        } catch (err) { setScanError('Failed to start camera.'); }
+        } catch (err) { setScanError('Camera Init Failed'); }
     };
 
     const stopScanning = async () => {
@@ -116,40 +119,42 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         setScanError('');
         try {
             const signal = p2pMesh.expandSignal(decodedText);
-            if (!signal) { setScanError('Invalid MeshGuard Signal'); return; }
+            if (!signal) { setScanError('Corrupt Signal'); return; }
 
-            if (handshakeStep === 'idle') {
-                // We are responding to an offer
-                if (signal.type !== 'offer') { setScanError('Please scan an INITIATOR QR'); return; }
-                setStatusMessage('Generating Response...');
-                setHandshakeStep('generating');
+            if (state === 'IDLE') {
+                // Device B: Receiving Offer -> Becoming Responder
+                if (signal.type !== 'offer') { setScanError('Scan the INITIATOR first'); return; }
+                setState('PROCESSING_SCAN');
+                setStatusMessage('Decrypting & Responding...');
                 stopScanning();
                 p2pMesh.receiveConnection(signal);
-            } else if (handshakeStep === 'scanning-answer') {
-                // We are completing the handshake
-                if (signal.type !== 'answer') { setScanError('Please scan the RESPONSE QR'); return; }
+            } else if (state === 'SCANNING_ANSWER') {
+                // Device A: Receiving Answer -> Finalizing Tunnel
+                if (signal.type !== 'answer') { setScanError('Scan the RESPONSE QR'); return; }
                 p2pMesh.completeHandshake(signal);
-                setHandshakeStep('idle');
+                setState('CONNECTING');
+                setStatusMessage('Establishing Tunnel...');
                 stopScanning();
-                setStatusMessage('Connecting...');
-                setTimeout(() => setStatusMessage(''), 5000);
+                setTimeout(() => { if (stateRef.current === 'CONNECTING') handleReset(); }, 8000);
             }
-        } catch (err) { setScanError('Handshake Logic Error'); }
+        } catch (err) { setScanError('Handshake Logic Failure'); }
     };
 
-    // ACTION HANDLERS
+    // 4. Action Handlers
     const handleStartInitiation = () => {
-        setHandshakeStep('generating');
-        setStatusMessage('Creating Link...');
+        handleReset();
+        setState('GENERATING_OFFER');
+        setStatusMessage('Creating Encrypted Tunnel...');
         p2pMesh.initiateConnection();
     };
 
     const handleReset = () => {
-        setHandshakeStep('idle');
+        setState('IDLE');
         setStatusMessage('');
         setActiveSignal('');
-        setShowQrModal(false);
-        setShowScanner(false);
+        setShowModal(false);
+        setScanError('');
+        stopScanning();
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,7 +164,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         try {
             const decodedText = await html5QrCode.scanFile(file, true);
             handleScanResult(decodedText);
-        } catch (err) { setScanError('Failed to read QR photo'); }
+        } catch (err) { setScanError('Could not process image'); }
     };
 
     const switchCamera = async () => {
@@ -172,181 +177,174 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     };
 
     return (
-        <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">
+        <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24 px-4 overflow-x-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between px-2">
+            <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-blue-500/10 rounded-2xl border border-blue-500/10">
-                        <SettingsIcon className="w-6 h-6 text-blue-400" />
+                    <div className="p-2.5 bg-indigo-500/10 rounded-2xl border border-indigo-500/10">
+                        <Radio className={`w-6 h-6 ${peerCount > 0 ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
                     </div>
-                    <h2 className="text-2xl font-black tracking-tight text-white uppercase">Mesh System</h2>
+                    <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Status</h2>
                 </div>
-                <div className="flex items-center gap-2 border border-white/5 bg-slate-900/60 px-3 py-1.5 rounded-full shadow-inner">
-                    <Radio className={`w-3.5 h-3.5 ${peerCount > 0 ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
-                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{peerCount} PEERS</span>
+                <div className="bg-slate-900 shadow-xl px-4 py-2 rounded-full border border-white/5 flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${peerCount > 0 ? 'bg-green-500' : 'bg-slate-600'}`} />
+                    <span className="text-[10px] font-black text-white tracking-widest uppercase">{peerCount} MESH NODES</span>
                 </div>
             </div>
 
-            {/* MicroLink Card */}
-            <div className="bg-slate-900/60 backdrop-blur-3xl rounded-[2.5rem] border border-white/10 p-8 space-y-8 shadow-2xl relative overflow-hidden ring-1 ring-white/5">
-                <div className="flex items-center gap-5">
-                    <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
-                        <QrCode className="w-7 h-7" />
+            {/* Main Handshake Card */}
+            <div className="bg-slate-900/80 backdrop-blur-2xl rounded-[2.5rem] border border-white/10 p-8 space-y-8 shadow-2xl relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-500">
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-400">
+                        <QrCode className="w-6 h-6" />
                     </div>
                     <div>
-                        <p className="font-black text-xl text-white uppercase tracking-tighter">MicroLink Handshake</p>
-                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Full Offline Mesh v4.1</p>
+                        <p className="font-black text-lg text-white uppercase tracking-tighter leading-none">MicroLink v5</p>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.3em] mt-1">High-Reliability Handshake</p>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <button
                         onClick={handleStartInitiation}
-                        disabled={handshakeStep === 'generating'}
-                        className="flex items-center justify-center gap-4 p-7 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-3xl transition-all active:scale-95 shadow-xl shadow-indigo-900/40 font-black uppercase tracking-widest"
+                        className="p-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-indigo-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm"
                     >
-                        <QrCode className="w-7 h-7" />
-                        <span>Generate Link</span>
+                        <QrCode className="w-5 h-5" />
+                        Generate Link
                     </button>
-
                     <button
-                        onClick={() => { setHandshakeStep('idle'); setShowScanner(true); }}
-                        className="flex items-center justify-center gap-4 p-7 bg-slate-800 hover:bg-slate-700 text-white rounded-3xl transition-all active:scale-95 border border-white/5 font-black uppercase tracking-widest"
+                        onClick={() => { handleReset(); setShowScanner(true); }}
+                        className="p-6 bg-slate-800 hover:bg-slate-700 text-white rounded-3xl transition-all active:scale-95 border border-white/5 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm"
                     >
-                        <Camera className="w-7 h-7 text-slate-400" />
-                        <span>Scan Peer</span>
+                        <Camera className="w-5 h-5 text-slate-400" />
+                        Scan Peer
                     </button>
                 </div>
 
                 {statusMessage && (
-                    <div className="flex items-center justify-center gap-2 text-indigo-400 font-bold uppercase tracking-widest text-[10px] animate-pulse py-3 bg-indigo-500/5 rounded-2xl border border-indigo-500/10">
-                        <div className="w-2 h-2 bg-indigo-400 rounded-full animate-ping" />
-                        {statusMessage}
+                    <div className="py-3 px-6 bg-indigo-500/5 rounded-2xl border border-indigo-500/10 flex items-center justify-center gap-3">
+                        <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping" />
+                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{statusMessage}</span>
                     </div>
                 )}
             </div>
 
-            {/* Peer Nodes */}
+            {/* Connected Nodes List */}
             {peerCount > 0 && (
-                <div className="bg-slate-900/40 rounded-[2.5rem] border border-white/5 p-8 space-y-4 shadow-inner">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2">Active Nodes</p>
-                    <div className="grid gap-3">
-                        {connectedPeers.map((id) => (
-                            <div key={id} className="flex items-center justify-between bg-slate-950 p-4 rounded-2xl border border-white/5 shadow-sm">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.4)]" />
-                                    <span className="font-mono text-xs font-bold text-slate-300">{id}</span>
+                <div className="animate-in slide-in-from-bottom-2 duration-500">
+                    <div className="bg-slate-900/40 border border-white/5 rounded-[2.5rem] p-6 space-y-4">
+                        <p className="px-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Connected Identities</p>
+                        <div className="grid gap-2">
+                            {connectedPeers.map(id => (
+                                <div key={id} className="bg-slate-950/50 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.3)]" />
+                                        <span className="font-mono text-xs font-bold text-slate-300">{id}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-green-500/10 px-2 py-1 rounded-full border border-green-500/20">
+                                        <span className="text-[8px] font-black text-green-400 uppercase tracking-tighter">Verified Link</span>
+                                        <CheckCircle2 className="w-2.5 h-2.5 text-green-400" />
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">Secure</span>
-                                    <CheckCircle2 className="w-3 h-3 text-green-500" />
-                                </div>
-                            </div>
-                        ))}
+                            ))}
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* QR MODAL */}
-            {showQrModal && (
-                <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-3xl z-[9999] flex flex-col items-center justify-center p-6 pt-12 overflow-y-auto">
-                    <div className="bg-white p-8 md:p-12 rounded-[3.5rem] space-y-8 max-w-[90vw] md:max-w-xl w-full text-center relative shadow-3xl">
-                        <button onClick={() => setShowQrModal(false)} className="absolute top-6 right-6 p-2 bg-slate-100 rounded-full text-slate-400 active:scale-90 transition-all">
-                            <X className="w-6 h-6" />
-                        </button>
+            {/* QR MODAL (Offer/Answer Display) */}
+            {showModal && (
+                <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-3xl z-[9999] flex items-center justify-center p-6 overflow-y-auto">
+                    <div className="bg-white p-8 md:p-12 rounded-[3.5rem] w-full max-w-lg text-center space-y-8 relative animate-in zoom-in-95 duration-300 shadow-3xl">
+                        <button onClick={handleReset} className="absolute top-6 right-6 p-2 text-slate-300 hover:text-slate-900 transition-colors"><X className="w-6 h-6" /></button>
 
                         <div className="space-y-2">
-                            <div className="inline-block px-4 py-1.5 bg-indigo-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest mb-2">
-                                {handshakeStep === 'showing-offer' ? 'Step 1: Offer' : 'Step 2: Answer'}
-                            </div>
-                            <h3 className="text-slate-900 font-black text-3xl uppercase tracking-tighter leading-none">
-                                {handshakeStep === 'showing-offer' ? 'Share Signal' : 'Finalize Link'}
+                            <span className="inline-block px-4 py-1.5 bg-indigo-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest mb-3 shadow-lg shadow-indigo-200">
+                                {state === 'SHOWING_OFFER' ? 'Step 1: Invite Peer' : 'Step 2: Confirm Link'}
+                            </span>
+                            <h3 className="text-3xl font-black text-slate-900 uppercase tracking-tighter">
+                                {state === 'SHOWING_OFFER' ? 'Broadcast Signal' : 'Response Ready'}
                             </h3>
-                            <p className="text-slate-500 text-xs font-bold opacity-70 max-w-[240px] mx-auto uppercase tracking-tighter">
-                                {handshakeStep === 'showing-offer' ? 'Let your peer scan this code' : 'Scan this to complete the tunnel'}
+                            <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest max-w-[200px] mx-auto opacity-60">
+                                {state === 'SHOWING_OFFER' ? 'Let your peer scan this to begin' : 'Scan this to finish the secure tunnel'}
                             </p>
                         </div>
 
-                        <div className="bg-white p-6 rounded-[3rem] inline-block border-[10px] border-slate-50 shadow-inner">
+                        <div className="inline-block p-6 bg-slate-50 rounded-[3.5rem] border-[10px] border-white shadow-inner relative">
                             {activeSignal ? (
                                 <QRCodeCanvas value={activeSignal} size={qrSize} level="L" includeMargin={true} />
                             ) : (
                                 <div className="flex flex-col items-center justify-center gap-4" style={{ width: qrSize, height: qrSize }}>
-                                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                                    <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">Generating...</p>
+                                    <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                                    <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">Computing...</p>
                                 </div>
                             )}
                         </div>
 
-                        {handshakeStep === 'showing-offer' && (
-                            <div className="space-y-4">
+                        <div className="space-y-4">
+                            {state === 'SHOWING_OFFER' ? (
                                 <button
-                                    onClick={() => { setShowQrModal(false); setHandshakeStep('scanning-answer'); setShowScanner(true); }}
-                                    className="w-full p-6 bg-indigo-600 text-white rounded-3xl font-black uppercase tracking-widest text-sm shadow-xl shadow-indigo-500/30 flex items-center justify-center gap-3 transition-all active:scale-95"
+                                    onClick={() => { setShowModal(false); setState('SCANNING_ANSWER'); setShowScanner(true); }}
+                                    className="w-full p-6 bg-indigo-600 text-white rounded-3xl font-black uppercase tracking-widest text-sm shadow-xl shadow-indigo-300 flex items-center justify-center gap-3 active:scale-95 transition-all"
                                 >
-                                    <Camera className="w-6 h-6" />
-                                    <span>Scan Response</span>
+                                    <Camera className="w-5 h-5" />
+                                    Scan Response
                                 </button>
-                                <button onClick={handleReset} className="flex items-center gap-2 text-slate-400 font-bold uppercase text-[10px] tracking-widest mx-auto opacity-50 hover:opacity-100 transition-opacity">
-                                    <RotateCcw className="w-3 h-3" />
-                                    Reset Handshake
-                                </button>
-                            </div>
-                        )}
-
-                        {handshakeStep === 'showing-answer' && (
-                            <div className="space-y-4">
-                                <p className="text-indigo-600 font-black uppercase tracking-widest text-[9px] animate-pulse">
-                                    Awaiting peer confirmation...
-                                </p>
-                                <button onClick={handleReset} className="p-4 bg-slate-50 rounded-2xl w-full text-slate-400 font-black uppercase text-[10px] tracking-widest">Cancel</button>
-                            </div>
-                        )}
+                            ) : (
+                                <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 flex items-center justify-center gap-3">
+                                    <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-ping" />
+                                    <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Awaiting Confirmation...</span>
+                                </div>
+                            )}
+                            <button onClick={handleReset} className="flex items-center gap-2 mx-auto text-[10px] font-black text-slate-400 uppercase tracking-widest opacity-50 hover:opacity-100 transition-all">
+                                <RotateCcw className="w-3 h-3" />
+                                Cancel Handshake
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* SCANNER */}
+            {/* SCANNER OVERLAY */}
             {showScanner && (
-                <div className="fixed inset-0 bg-black z-[10000] flex flex-col items-center justify-center p-6">
+                <div className="fixed inset-0 bg-black z-[10000] flex flex-col items-center justify-center p-6 animate-in slide-in-from-top duration-500">
                     <div className="w-full max-w-sm space-y-6">
                         <div className="flex items-center justify-between px-2">
-                            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Locate Signal</h3>
-                            <button onClick={stopScanning} className="p-4 bg-white/10 rounded-2xl text-white border border-white/10 active:scale-90 transition-all"><X className="w-6 h-6" /></button>
+                            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Locating Link</h3>
+                            <button onClick={handleReset} className="p-3 bg-white/10 rounded-2xl text-white border border-white/10"><X className="w-6 h-6" /></button>
                         </div>
 
-                        <div className="relative overflow-hidden rounded-[3.5rem] border-4 border-indigo-500 aspect-square bg-slate-900 shadow-3xl shadow-indigo-500/20">
+                        <div className="relative aspect-square rounded-[3.5rem] overflow-hidden border-4 border-indigo-600 shadow-[0_0_80px_rgba(79,70,229,0.3)] bg-slate-900">
                             <div id="reader" className="w-full h-full" />
-                            <div className="absolute inset-0 pointer-events-none border-[50px] border-black/60" />
-                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 border-2 border-indigo-400/30 rounded-[2.5rem]" />
-                            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-56 h-0.5 bg-indigo-500 shadow-[0_0_20px_rgba(79,70,229,1)] animate-scan-move pointer-events-none" />
+                            <div className="absolute inset-0 border-[60px] border-black/40 pointer-events-none" />
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-indigo-400/20 rounded-[2.5rem] pointer-events-none" />
+                            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-48 h-0.5 bg-indigo-500 shadow-[0_0_20px_rgba(79,70,229,1)] animate-sweep pointer-events-none" />
 
                             {isCameraBlocked && (
                                 <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-6">
-                                    <Camera className="w-12 h-12 text-red-500" />
-                                    <p className="font-black text-white uppercase text-sm">Camera Disabled</p>
-                                    <button onClick={() => { setIsCameraBlocked(false); setShowScanner(false); setTimeout(() => setShowScanner(true), 100); }} className="px-8 py-3 bg-white text-black font-black uppercase rounded-xl text-xs">Authorize</button>
+                                    <AlertTriangle className="w-10 h-10 text-red-500" />
+                                    <p className="text-white font-black uppercase text-xs">Camera Access Blocked</p>
+                                    <button onClick={() => window.location.reload()} className="px-6 py-3 bg-white text-black font-black uppercase text-[10px] rounded-xl shadow-lg shadow-white/10">Reload App</button>
                                 </div>
                             )}
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
-                            <label className="flex flex-col items-center justify-center gap-2 p-5 bg-white/5 text-white rounded-2xl font-black uppercase tracking-widest cursor-pointer border border-white/10 active:scale-95 transition-all text-[9px]">
-                                <QrCode className="w-5 h-5 text-indigo-400" />
-                                <span>Gallery</span>
+                            <label className="flex flex-col items-center p-5 bg-white/5 border border-white/10 rounded-2xl text-[9px] font-black text-white uppercase tracking-widest cursor-pointer active:scale-95 transition-all">
+                                <QrCode className="w-5 h-5 text-indigo-400 mb-2" />
+                                Gallery
                                 <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
                             </label>
-
                             {cameras.length > 1 && (
-                                <button onClick={switchCamera} className="flex flex-col items-center justify-center gap-2 p-5 bg-white/5 text-white rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all text-[9px] border border-white/10">
-                                    <Camera className="w-5 h-5" />
-                                    <span>Swap</span>
+                                <button onClick={switchCamera} className="flex flex-col items-center p-5 bg-white/5 border border-white/10 rounded-2xl text-[9px] font-black text-white uppercase tracking-widest active:scale-95 transition-all">
+                                    <Camera className="w-5 h-5 text-slate-400 mb-2" />
+                                    Swap Cam
                                 </button>
                             )}
                         </div>
 
                         {scanError && (
-                            <div className="bg-red-600 p-4 rounded-xl text-white text-[9px] font-black text-center uppercase tracking-widest animate-shake">
+                            <div className="bg-red-500 text-white p-4 rounded-2xl text-[10px] font-black text-center uppercase tracking-widest animate-shake ring-4 ring-red-500/20">
                                 {scanError}
                             </div>
                         )}
@@ -354,52 +352,48 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 </div>
             )}
 
-            {/* AI Preferences */}
-            <div className="bg-slate-900/60 backdrop-blur-3xl rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl shadow-black/40">
-                <div className="p-8 flex items-center justify-between hover:bg-white/5 transition-all cursor-pointer group" onClick={() => onToggleFallDetection(!fallDetectionEnabled)}>
+            {/* Edge AI Analytics Card */}
+            <div className="bg-slate-900/60 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl">
+                <div className="p-8 flex items-center justify-between group cursor-pointer" onClick={() => onToggleFallDetection(!fallDetectionEnabled)}>
                     <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20 group-hover:bg-blue-500/20 transition-all"><Shield className="w-7 h-7" /></div>
+                        <div className="w-14 h-14 bg-indigo-500/10 rounded-[1.5rem] flex items-center justify-center text-indigo-400 group-hover:bg-indigo-500/20 transition-all">
+                            <Shield className="w-7 h-7" />
+                        </div>
                         <div>
-                            <p className="font-extrabold text-lg text-white">Edge AI Guard</p>
-                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60">Neural Fall Analytics</p>
+                            <p className="text-lg font-black text-white uppercase tracking-tighter">AI Guard System</p>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60">Real-time Kinematics</p>
                         </div>
                     </div>
-                    <div className={`w-14 h-8 rounded-full transition-all relative ${fallDetectionEnabled ? 'bg-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'bg-slate-800'}`}>
-                        <div className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full transition-transform duration-300 ${fallDetectionEnabled ? 'translate-x-6' : ''}`} />
+                    <div className={`w-14 h-8 rounded-full transition-all duration-300 relative ${fallDetectionEnabled ? 'bg-indigo-600 shadow-[0_0_20px_rgba(79,70,229,0.4)]' : 'bg-slate-800'}`}>
+                        <div className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full transition-all duration-300 ${fallDetectionEnabled ? 'translate-x-6' : ''}`} />
                     </div>
                 </div>
             </div>
 
-            <div className="bg-blue-600/5 backdrop-blur-lg p-6 rounded-[2rem] border border-blue-500/20 flex gap-4 items-start mx-2 shadow-inner">
-                <div className="p-2.5 bg-blue-500/10 rounded-xl">
-                    <Info className="w-5 h-5 text-blue-400" />
-                </div>
+            <div className="mx-2 p-6 bg-indigo-600/5 rounded-[2.5rem] border border-indigo-500/20 flex gap-4 items-start shadow-inner">
+                <Info className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
                 <div>
-                    <p className="font-black text-blue-400 uppercase tracking-widest text-[9px] mb-0.5">Stability Update 4.2</p>
-                    <p className="text-blue-100/60 font-medium leading-relaxed text-[11px] italic">
-                        "Race conditions in handshake have been resolved. Use manual Reset if a tunnel fails to stabilize."
+                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1 leading-none">Safety Protocol 5.0</p>
+                    <p className="text-[11px] text-indigo-100/60 font-medium leading-relaxed italic">
+                        "Handshake signals are now encrypted and multi-path optimized. If a link hangs, use the Reset button to refresh the tunnel state."
                     </p>
                 </div>
             </div>
 
             <style>{`
-                @keyframes scan-move {
+                @keyframes sweep {
                     0% { top: 25%; opacity: 0; }
-                    10% { opacity: 1; }
-                    90% { opacity: 1; }
+                    15% { opacity: 1; }
+                    85% { opacity: 1; }
                     100% { top: 75%; opacity: 0; }
                 }
-                .animate-scan-move {
-                    animation: scan-move 2s infinite ease-in-out;
-                }
+                .animate-sweep { animation: sweep 2.5s infinite ease-in-out; }
                 @keyframes shake {
                     0%, 100% { transform: translateX(0); }
-                    25% { transform: translateX(-5px); }
-                    75% { transform: translateX(5px); }
+                    20% { transform: translateX(-4px); }
+                    80% { transform: translateX(4px); }
                 }
-                .animate-shake {
-                    animation: shake 0.4s ease-in-out;
-                }
+                .animate-shake { animation: shake 0.3s ease-in-out; }
             `}</style>
         </div>
     );
