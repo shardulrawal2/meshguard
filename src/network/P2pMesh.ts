@@ -142,10 +142,7 @@ export class P2pMesh {
             initiator,
             trickle: false,
             config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ],
+                iceServers: [], // Revert to pure offline to avoid public WiFi timeouts
                 iceTransportPolicy: 'all',
                 iceCandidatePoolSize: 10
             }
@@ -289,29 +286,28 @@ export class P2pMesh {
                 const firstCand = candidates[0] || '';
                 const parts = firstCand.split(' ');
 
-                // Detection for IP version mismatch
+                // Detection for IP version mismatch (v5.3 logic)
                 const ipVer = parts.length > 5 && parts[5] === 'IP6' ? '6' : '4';
-                const cLineIp = parts.length > 4 ? parts[4] : (ipVer === '6' ? '::1' : '0.0.0.0');
+                const cLineIp = parts.length > 4 ? parts[4] : '0.0.0.0';
                 const isOffer = t === '1';
 
                 const sdpLines = [
                     'v=0',
-                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Math.random() * 100)} IN IP${ipVer} ${ipVer === '6' ? '::1' : '127.0.0.1'}`,
+                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Math.random() * 100)} IN IP4 127.0.0.1`,
                     's=-',
                     't=0 0',
-                    'a=msid-semantic: WMS',
                     'a=group:BUNDLE 0',
-                    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+                    'm=application 9 DTLS/SCTP 5000',
                     `c=IN IP${ipVer} ${cLineIp}`,
                     `a=ice-ufrag:${u}`,
                     `a=ice-pwd:${p}`,
                     `a=fingerprint:${a || 'sha-256'} ${f}`,
                     `a=setup:${isOffer ? 'actpass' : 'active'}`,
                     'a=mid:0',
-                    'a=sctp-port:5000',
-                    'a=max-message-size:262144',
-                    ...candidates.map((cand: string) => `a=candidate:${cand}`),
-                    'a=end-of-candidates'
+                    'a=rtcp-mux',
+                    'a=rtcp-rsize',
+                    'a=sctpmap:5000 webrtc-datachannel 1024',
+                    ...candidates.map((cand: string) => `a=candidate:${cand}`)
                 ];
                 signal.sdp = sdpLines.map(l => l.trim()).filter(Boolean).join('\r\n') + '\r\n';
             }

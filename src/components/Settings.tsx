@@ -144,7 +144,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 addLog('Answer Received. Completing Handshake...');
                 p2pMesh.completeHandshake(signal);
                 setState('CONNECTING');
-                setStatusMessage('Finalizing Connection...');
+                setStatusMessage('Establishing Secure Link...');
                 stopScanning();
 
                 // Safety: Reset if connection takes > 15 seconds
@@ -276,7 +276,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
                 {statusMessage && (
                     <div className="py-4 bg-indigo-500/5 rounded-2xl border border-indigo-500/10 flex items-center justify-center gap-3 animate-pulse">
-                        <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
+                        <span className="w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
                         <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{statusMessage}</span>
                     </div>
                 )}
