@@ -125,7 +125,7 @@ export class P2pMesh {
                     const minified = this.minifySignal(data);
                     this.lastSignal = minified;
                     if (this.onSignalCallback) this.onSignalCallback(minified);
-                }, 1200); // Increased timeout for mobile SDP gathering
+                }, 1500); // 1.5s delay to ensure all host candidates are gathered
             }
         });
 
@@ -171,7 +171,16 @@ export class P2pMesh {
             packed.u = getValue('a=ice-ufrag:');
             packed.p = getValue('a=ice-pwd:');
             packed.f = (getValue('a=fingerprint:').split(' ')[1] || '');
-            packed.c = lines.filter((l: any) => l.startsWith('a=candidate:')).slice(0, 4).map((l: any) => l.replace('a=candidate:', '').trim()).join(';');
+
+            // Prioritize Host and IPv4 candidates
+            const candidates = lines.filter((l: any) => l.startsWith('a=candidate:'));
+            const prioritized = candidates
+                .filter((l: any) => l.includes('host') && l.includes('IP4'))
+                .slice(0, 5)
+                .map((l: any) => l.replace('a=candidate:', '').trim());
+
+            // Fallback to any candidates if no host IPv4 found
+            packed.c = (prioritized.length > 0 ? prioritized : candidates.slice(0, 3).map((l: any) => l.replace('a=candidate:', '').trim())).join(';');
         }
         return LZString.compressToEncodedURIComponent(JSON.stringify(packed));
     }
@@ -195,13 +204,14 @@ export class P2pMesh {
                 const candidates = (packed.c || '').split(';');
                 const firstCandidate = candidates[0] || '';
                 const parts = firstCandidate.split(' ');
-                const ipVer = parts[5] === 'IP6' ? '6' : '4';
-                const cLineIp = parts[4] || '0.0.0.0';
 
-                // Robust SDP reconstruction with standard headers
+                // Extract best IP for c= line. Use IP4 if found, default to 127.0.0.1
+                const ipVer = parts[5] === 'IP6' ? '6' : '4';
+                const cLineIp = (parts[4] && parts[4] !== '0.0.0.0') ? parts[4] : '127.0.0.1';
+
                 const sdp = [
                     'v=0',
-                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP4 127.0.0.1`,
+                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP4 ${cLineIp}`,
                     's=-',
                     't=0 0',
                     'a=msid-semantic: WMS',

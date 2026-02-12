@@ -86,60 +86,60 @@ export const Settings: React.FC<SettingsProps> = ({
         try {
             const signal = p2pMesh.expandSignal(text);
             if (!signal) {
-                addLog('Error: Signal expansion failed');
+                addLog('Error: QR Expansion Failed (Corrupt?)');
                 setScanError('Invalid QR Code Format');
                 return;
             }
 
             const currentState = stateRef.current;
-            addLog(`Signal: ${signal.type.toUpperCase()} (State: ${currentState})`);
+            addLog(`Handshake: Received ${signal.type.toUpperCase()} in ${currentState}`);
 
             if (signal.type === 'offer') {
-                // If we receive an offer, we must act as a Responder
                 if (currentState === 'IDLE' || currentState === 'PROCESSING_SCAN' || currentState === 'SHOWING_ANSWER') {
                     if (currentState === 'PROCESSING_SCAN' || currentState === 'SHOWING_ANSWER') {
-                        addLog('Info: Already processing/showing an answer');
+                        addLog('Info: Continuing with existing response');
                         return;
                     }
 
-                    addLog('Offer received, generating response...');
+                    addLog('Offer valid. Generating secure answer...');
                     setState('PROCESSING_SCAN');
                     setStatusMessage('Generating Response...');
                     stopScanning();
 
                     setTimeout(() => {
-                        addLog('Creating responder peer...');
+                        addLog('Mesh: Creating responder instance...');
                         p2pMesh.receiveConnection(signal);
                     }, 100);
                 } else {
-                    addLog('Error: Initiator cannot scan another offer');
-                    setScanError('Please wait for the peer to scan your offer');
+                    addLog('Note: Initiator ignored secondary offer');
+                    setScanError('Peer must scan YOUR offer first');
                 }
             } else if (signal.type === 'answer') {
-                // If we receive an answer, we must act as an Initiator
                 if (currentState === 'SCANNING_ANSWER' || currentState === 'SHOWING_OFFER' || currentState === 'IDLE') {
-                    addLog('Answer received, completing handshake...');
+                    addLog('Answer valid. Finalizing tunnel...');
                     p2pMesh.completeHandshake(signal);
                     setState('CONNECTING');
-                    setStatusMessage('Establishing Secure Link...');
+                    setStatusMessage('Establishing Tunnel...');
                     stopScanning();
 
-                    // Safety timeout
+                    // Increased safety timeout for mobile radio wakeup
                     setTimeout(() => {
                         if (stateRef.current === 'CONNECTING') {
-                            addLog('Connection timeout - resetting');
+                            addLog('Warning: Handshake timed out after 30s');
                             handleReset();
+                            setScanError('Connection Timeout');
                         }
-                    }, 15000);
+                    }, 30000);
                 } else {
-                    addLog('Error: Responder cannot scan an answer');
-                    setScanError('Please scan the initiator code first');
+                    addLog('Note: Ignoring peer answer (expected offer)');
+                    setScanError('Please scan the Initiator code first');
                 }
             }
         } catch (err) {
             console.error('[Settings] Signal processing error:', err);
-            addLog('Critical error during signal processing');
-            setScanError('Handshake Failed');
+            addLog('Critical: Handshake logic failed');
+            setScanError('Connection Failed');
+            handleReset();
         }
     };
 
