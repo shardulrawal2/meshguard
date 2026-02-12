@@ -108,7 +108,7 @@ export class BluetoothService {
         }
     }
 
-    async sendSignal(peerId: string, signal: any) {
+    async sendSignal(_peerId: string, signal: any) {
         const payload = JSON.stringify({
             type: 'signal',
             sender: p2pMesh.myId,
