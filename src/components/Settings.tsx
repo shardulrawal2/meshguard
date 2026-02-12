@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Bell, Shield, Info, Radio, Copy, Check, QrCode, Camera, X, Bluetooth } from 'lucide-react';
+import { Settings as SettingsIcon, Bell, Shield, Info, Radio, QrCode, Camera, X, Bluetooth } from 'lucide-react';
 import { p2pMesh } from '../network/P2pMesh';
-import { bluetoothService } from '../network/BluetoothService';
+// import { bluetoothService } from '../network/BluetoothService';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 
@@ -142,20 +142,30 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
                 {/* Connection Status */}
                 {peerCount > 0 && (
-                    <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-2xl">
-                        <div className="flex items-center gap-2 mb-2">
-                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                            <span className="text-[10px] font-black text-green-400 uppercase tracking-widest">
-                                {peerCount} {peerCount === 1 ? 'Peer' : 'Peers'} Connected
-                            </span>
-                        </div>
-                        <div className="text-[9px] text-slate-400 space-y-1">
-                            {connectedPeers.map((peerId) => (
-                                <div key={peerId} className="flex items-center gap-2">
-                                    <Radio className="w-3 h-3 text-green-400" />
-                                    <span>{peerId}</span>
-                                </div>
-                            ))}
+                    <div className="space-y-3">
+                        <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-2xl">
+                            <div className="flex items-center gap-2 mb-2">
+                                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                                <span className="text-[10px] font-black text-green-400 uppercase tracking-widest">
+                                    {peerCount} {peerCount === 1 ? 'Peer' : 'Peers'} Connected
+                                </span>
+                            </div>
+                            <div className="text-[9px] text-slate-400 space-y-2">
+                                {connectedPeers.map((peerId) => {
+                                    const isAuto = peerId.startsWith('peer-');
+                                    return (
+                                        <div key={peerId} className="flex items-center justify-between bg-slate-900/40 p-2 rounded-lg border border-white/5">
+                                            <div className="flex items-center gap-2">
+                                                <Radio className={`w-3 h-3 ${isAuto ? 'text-blue-400' : 'text-orange-400'}`} />
+                                                <span className="font-mono text-slate-300">{peerId}</span>
+                                            </div>
+                                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${isAuto ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>
+                                                {isAuto ? 'TAB SYNC' : 'QR SCAN'}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                 )}

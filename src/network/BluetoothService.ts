@@ -9,15 +9,13 @@ export class BluetoothService {
     constructor() { }
 
     async scanAndConnect() {
-        // @ts-ignore
-        if (typeof navigator === 'undefined' || !navigator.bluetooth) {
+        if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
             console.warn('Web Bluetooth not supported.');
             return false;
         }
 
         try {
-            // @ts-ignore
-            const device = await navigator.bluetooth.requestDevice({
+            const device = await (navigator as any).bluetooth.requestDevice({
                 filters: [{ services: [this.serviceUuid] }],
                 optionalServices: [this.serviceUuid]
             });
@@ -71,8 +69,7 @@ export class BluetoothService {
     }
 
     isSupported() {
-        // @ts-ignore
-        return typeof navigator !== 'undefined' && !!navigator.bluetooth;
+        return typeof navigator !== 'undefined' && !!(navigator as any).bluetooth;
     }
 
     getDeviceCount() {

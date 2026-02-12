@@ -1,6 +1,5 @@
 import { openDB } from 'idb';
 import type { IDBPDatabase } from 'idb';
-import Peer from 'simple-peer';
 import type { SOSMessage } from '../types/sos';
 
 const DB_NAME = 'meshguard-db';

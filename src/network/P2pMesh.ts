@@ -10,9 +10,19 @@ export class P2pMesh {
     private lastSignal: any = null;
     private onPeerCountChange: ((count: number) => void) | null = null;
     private savedPeers: Map<string, any> = new Map(); // Store peer signals for reconnection
+    private broadcastChannel: BroadcastChannel;
+    private myId: string;
 
     constructor() {
-        console.log('[P2pMesh] Initialized');
+        this.myId = `peer-${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`[P2pMesh] Initialized as ${this.myId}`);
+
+        this.broadcastChannel = new BroadcastChannel('meshguard-signaling');
+        this.broadcastChannel.onmessage = this.handleBroadcastMessage.bind(this);
+
+        // Announce presence to other tabs
+        this.broadcastChannel.postMessage({ type: 'presence', sender: this.myId });
+
         this.loadSavedPeers();
     }
 
@@ -29,7 +39,7 @@ export class P2pMesh {
             });
 
             console.log(`[P2pMesh] Loaded ${allPeers.length} saved peers`);
-        } catch (err) {
+        } catch (err: any) {
             console.warn('[P2pMesh] Could not load saved peers:', err);
         }
     }
@@ -42,8 +52,9 @@ export class P2pMesh {
             const store = tx.objectStore('peers');
             await store.put({ id: peerId, signal, timestamp: Date.now() });
             this.savedPeers.set(peerId, signal);
+            this.savedPeers.set(peerId, signal);
             console.log(`[P2pMesh] Saved peer ${peerId} for reconnection`);
-        } catch (err) {
+        } catch (err: any) {
             console.warn('[P2pMesh] Could not save peer:', err);
         }
     }
@@ -54,8 +65,37 @@ export class P2pMesh {
         for (const [peerId, signal] of this.savedPeers) {
             try {
                 await this.receiveConnection(signal);
-            } catch (err) {
+            } catch (err: any) {
                 console.warn(`[P2pMesh] Failed to reconnect to ${peerId}:`, err);
+            }
+        }
+    }
+
+    private handleBroadcastMessage(event: MessageEvent) {
+        const { type, sender, target, signal } = event.data;
+
+        // Ignore messages from self or not meant for me
+        if (sender === this.myId) return;
+        if (target && target !== this.myId) return;
+
+        if (type === 'presence') {
+            // Found a new peer on the same device! Initiate connection.
+            if (!this.peers.has(sender)) {
+                console.log(`[P2pMesh] Discovered local peer ${sender}, initiating connection...`);
+                this.createPeer(true, undefined, sender);
+            }
+        } else if (type === 'signal') {
+            // Received a signaling message
+            if (!this.peers.has(sender)) {
+                // Received offer from initiator, create receiver peer
+                if (signal.type === 'offer') {
+                    console.log(`[P2pMesh] Accepting connection from ${sender}...`);
+                    this.createPeer(false, signal, sender);
+                }
+            } else {
+                // Existing peer, pass signal
+                const peer = this.peers.get(sender);
+                peer.signal(signal);
             }
         }
     }
@@ -70,18 +110,30 @@ export class P2pMesh {
         return this.createPeer(false, signalData);
     }
 
-    private createPeer(initiator: boolean, remoteSignal?: any) {
+    private createPeer(initiator: boolean, remoteSignal?: any, remotePeerId?: string) {
         const peer = new SimplePeer({
             initiator,
             trickle: false,
         });
 
-        const tempId = `peer-${Math.random().toString(36).substr(2, 5)}`;
+        // Use remotePeerId if provided (auto-discovery), otherwise generate temp ID (QR scan)
+        const peerId = remotePeerId || `qr-${Math.random().toString(36).substr(2, 5)}`;
 
-        peer.on('signal', data => {
-            console.log(`[P2pMesh] Signal generated (${data.type || 'candidate'}):`, data);
-            this.lastSignal = data;
-            if (this.onSignalCallback) this.onSignalCallback(data);
+        peer.on('signal', (data: any) => {
+            // If we know the remote peer ID (Auto-Discovery), send signal via BroadcastChannel
+            if (remotePeerId) {
+                this.broadcastChannel.postMessage({
+                    type: 'signal',
+                    sender: this.myId,
+                    target: remotePeerId,
+                    signal: data
+                });
+            } else {
+                // Legacy QR flow
+                console.log(`[P2pMesh] Signal generated (${data.type || 'candidate'}):`, data);
+                this.lastSignal = data;
+                if (this.onSignalCallback) this.onSignalCallback(data);
+            }
         });
 
         // @ts-ignore
@@ -91,12 +143,12 @@ export class P2pMesh {
         };
 
         peer.on('connect', () => {
-            console.log(`[P2pMesh] Connected to ${tempId}`);
-            this.peers.set(tempId, peer);
+            console.log(`[P2pMesh] Connected to ${peerId}`);
+            this.peers.set(peerId, peer);
 
             // Save peer for reconnection (only if we're the receiver)
             if (!initiator && remoteSignal) {
-                this.savePeerSignal(tempId, remoteSignal);
+                this.savePeerSignal(peerId, remoteSignal);
             }
 
             // Notify UI of peer count change
@@ -105,23 +157,23 @@ export class P2pMesh {
             }
         });
 
-        peer.on('data', data => {
+        peer.on('data', (data: any) => {
             try {
                 const message: SOSMessage = JSON.parse(data.toString());
-                this.handleIncomingMessage(message, tempId);
-            } catch (err) {
+                this.handleIncomingMessage(message, peerId);
+            } catch (err: any) {
                 console.error('[P2pMesh] Error parsing incoming data', err);
             }
         });
 
-        peer.on('error', err => {
-            console.error(`[P2pMesh] Peer error (${tempId}):`, err);
-            this.peers.delete(tempId);
+        peer.on('error', (err: any) => {
+            console.error(`[P2pMesh] Peer error (${peerId}):`, err);
+            this.peers.delete(peerId);
         });
 
         peer.on('close', () => {
-            console.log(`[P2pMesh] Connection closed (${tempId})`);
-            this.peers.delete(tempId);
+            console.log(`[P2pMesh] Connection closed (${peerId})`);
+            this.peers.delete(peerId);
 
             // Notify UI of peer count change
             if (this.onPeerCountChange) {
@@ -171,7 +223,7 @@ export class P2pMesh {
                 try {
                     peer.send(payload);
                     console.log(`[P2pMesh] Relayed message to ${id}`);
-                } catch (err) {
+                } catch (err: any) {
                     console.error(`[P2pMesh] Failed to send to ${id}`, err);
                 }
             }
