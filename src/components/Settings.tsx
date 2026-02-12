@@ -78,6 +78,13 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     const [connectionStage, setConnectionStage] = useState<'idle' | 'showing-offer' | 'pending-acceptance' | 'showing-answer'>('idle');
     const [pendingOffer, setPendingOffer] = useState<any>(null);
 
+    // Ref to track current stage inside stale closures (scanner callbacks)
+    const connectionStageRef = React.useRef(connectionStage);
+    useEffect(() => {
+        connectionStageRef.current = connectionStage;
+    }, [connectionStage]);
+
+
     const handleScanResult = (decodedText: string) => {
         try {
             // Attempt to decompress first
@@ -90,11 +97,12 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
             }
 
             const signal = JSON.parse(signalString);
+            const currentStage = connectionStageRef.current;
 
             if (signal.type === 'offer') {
                 // GUARD: Only accept offers if we are completely idle. 
-                if (connectionStage !== 'idle') {
-                    console.log('Ignoring offer signal because stage is NOT idle:', connectionStage);
+                if (currentStage !== 'idle') {
+                    console.log('Ignoring offer signal because stage is NOT idle:', currentStage);
                     return;
                 }
 
@@ -104,8 +112,8 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 stopScanning();
             } else if (signal.type === 'answer') {
                 // GUARD: Only accept answers if we are the initiator (showing-offer)
-                if (connectionStage !== 'showing-offer') {
-                    console.log('Ignoring answer signal because stage is NOT showing-offer:', connectionStage);
+                if (currentStage !== 'showing-offer') {
+                    console.log('Ignoring answer signal because stage is NOT showing-offer:', currentStage);
                     return;
                 }
 
@@ -116,7 +124,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 setConnectionStage('idle');
             } else {
                 // Fallback for legacy
-                if (connectionStage === 'idle') {
+                if (currentStage === 'idle') {
                     p2pMesh.receiveConnection(signal);
                     stopScanning();
                 }
