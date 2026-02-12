@@ -52,8 +52,8 @@ export class P2pMesh {
     }
 
     async reconnectToSavedPeers() {
-        for (const [id, signal] of this.savedPeers) {
-            try { await this.receiveConnection(signal); } catch (e) { }
+        for (const [_id, signal] of this.savedPeers) {
+            try { await this.receiveConnection(signal); } catch (_e) { }
         }
     }
 
@@ -123,9 +123,10 @@ export class P2pMesh {
             try { this.handleIncomingMessage(JSON.parse(data.toString()), peerId); } catch (e) { }
         });
 
-        peer.on('error', (err: any) => {
+        peer.on('error', (_err: any) => {
             this.peers.delete(peerId);
             if (this.onPeerCountChange) this.onPeerCountChange(this.peers.size);
+            if (this.onPeerErrorCallback) this.onPeerErrorCallback(_err.message || 'Peer Error');
         });
 
         peer.on('close', () => {
