@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, Shield, Info, Radio, QrCode, Camera, X, CheckCircle2, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Shield, Info, Radio, QrCode, Camera, X, CheckCircle2, RotateCcw, AlertTriangle } from 'lucide-react';
 import { p2pMesh } from '../network/P2pMesh';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
