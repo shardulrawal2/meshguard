@@ -11,7 +11,7 @@ export class P2pMesh {
     private onPeerCountChange: ((count: number) => void) | null = null;
     private savedPeers: Map<string, any> = new Map(); // Store peer signals for reconnection
     private broadcastChannel: BroadcastChannel;
-    private myId: string;
+    public myId: string;
     private pendingInitiator: any = null; // Track the peer waiting for an answer
 
     constructor() {
@@ -101,16 +101,16 @@ export class P2pMesh {
         }
     }
 
-    initiateConnection() {
+    initiateConnection(remotePeerId?: string) {
         this.lastSignal = null;
-        const peer = this.createPeer(true);
+        const peer = this.createPeer(true, undefined, remotePeerId);
         this.pendingInitiator = peer;
         return peer;
     }
 
     // New method to respond to a connection attempt
-    receiveConnection(signalData: any) {
-        return this.createPeer(false, signalData);
+    receiveConnection(signalData: any, remotePeerId?: string) {
+        return this.createPeer(false, signalData, remotePeerId);
     }
 
     // Complete the handshake by providing the answer signal to the initiator

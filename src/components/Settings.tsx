@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Bell, Shield, Info, Radio, QrCode, Camera, X } from 'lucide-react';
+import { Settings as SettingsIcon, Bell, Shield, Info, Radio, QrCode, Camera, X, Bluetooth } from 'lucide-react';
 import { p2pMesh } from '../network/P2pMesh';
-// import { bluetoothService } from '../network/BluetoothService';
+import { bluetoothService } from '../network/BluetoothService';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
-import LZString from 'lz-string';
 
 interface SettingsProps {
     fallDetectionEnabled: boolean;
@@ -25,35 +24,42 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
 
     // Handshake State
-    const [connectionStage, setConnectionStage] = useState<'idle' | 'showing-offer' | 'pending-acceptance' | 'showing-answer'>('idle');
-    const [pendingOffer, setPendingOffer] = useState<any>(null);
+    const [connectionStage, setConnectionStage] = useState<'idle' | 'scanning' | 'bluetooth-connecting' | 'connecting-webrtc'>('idle');
+    const [targetPeerId, setTargetPeerId] = useState<string | null>(null);
 
     // Refs for stale closure handling
     const connectionStageRef = React.useRef(connectionStage);
-    const deniedSignalsRef = React.useRef<Set<string>>(new Set());
+    const targetPeerIdRef = React.useRef(targetPeerId);
 
     useEffect(() => {
         connectionStageRef.current = connectionStage;
-    }, [connectionStage]);
+        targetPeerIdRef.current = targetPeerId;
+    }, [connectionStage, targetPeerId]);
 
     // Mesh & Stats Subscriptions
     useEffect(() => {
-        p2pMesh.onSignal((signal) => {
-            // Minify keys to reduce QR density
-            const minified: any = {};
-            if (signal.type) minified.t = signal.type;
-            if (signal.sdp) minified.s = signal.sdp;
-            if (signal.candidate) minified.c = signal.candidate;
-            if (signal.sdpMid) minified.m = signal.sdpMid;
-            if (signal.sdpMLineIndex !== undefined) minified.i = signal.sdpMLineIndex;
-
-            const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(minified));
-            setMySignal(compressed);
-        });
+        // Generate Minimal QR: mg://ID/Timestamp
+        const shortId = p2pMesh.myId.replace('peer-', '').slice(0, 10);
+        const qrPayload = `mg://${shortId}/${Date.now()}`;
+        setMySignal(qrPayload);
 
         p2pMesh.onPeerCountChanged((count) => {
             setPeerCount(count);
             setConnectedPeers(p2pMesh.getConnectedPeerIds());
+        });
+
+        // Listen for signals via Bluetooth
+        bluetoothService.onSignal((senderId, signal) => {
+            console.log(`[Handshake] Received Bluetooth signal from ${senderId}`);
+            if (signal.type === 'offer') {
+                const peer = p2pMesh.receiveConnection(signal, senderId);
+                peer.on('signal', (answer: any) => {
+                    bluetoothService.sendSignal(senderId, answer);
+                });
+            } else if (signal.type === 'answer') {
+                p2pMesh.completeHandshake(signal);
+                setConnectionStage('idle');
+            }
         });
 
         setPeerCount(p2pMesh.getPeerCount());
@@ -71,13 +77,9 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 );
                 setSelectedCameraId(environmentCamera ? environmentCamera.id : devices[0].id);
             }
-        }).catch(err => {
-            console.error('Error getting cameras', err);
-            setIsCameraBlocked(true);
-        });
+        }).catch(() => setIsCameraBlocked(true));
     }, []);
 
-    // Auto-start scanning
     useEffect(() => {
         if (showScanner && selectedCameraId && !scannerObject) {
             startScanning();
@@ -85,85 +87,39 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
     }, [showScanner, selectedCameraId]);
 
     // HANDLERS
-    const handleScanResult = (decodedText: string) => {
-        try {
-            let signalString = decodedText;
-            try {
-                const decompressed = LZString.decompressFromEncodedURIComponent(decodedText);
-                if (decompressed) signalString = decompressed;
-            } catch (e) { /* ignore */ }
-
-            let signal = JSON.parse(signalString);
-
-            // Expand minified keys
-            if (signal.t) { signal.type = signal.t; delete signal.t; }
-            if (signal.s) { signal.sdp = signal.s; delete signal.s; }
-            if (signal.c) { signal.candidate = signal.c; delete signal.c; }
-            if (signal.m) { signal.sdpMid = signal.m; delete signal.m; }
-            if (signal.i !== undefined) { signal.sdpMLineIndex = signal.i; delete signal.i; }
-
-            const currentStage = connectionStageRef.current;
-            const sigStr = JSON.stringify(signal);
-            if (deniedSignalsRef.current.has(sigStr)) return;
-
-            if (signal.type === 'offer') {
-                if (currentStage !== 'idle') return;
-                setPendingOffer(signal);
-                setConnectionStage('pending-acceptance');
-                stopScanning();
-            } else if (signal.type === 'answer') {
-                if (currentStage !== 'showing-offer') return;
-                p2pMesh.completeHandshake(signal);
-                stopScanning();
-                alert('✅ CONNECTION ESTABLISHED!');
-                setConnectionStage('idle');
-            } else if (currentStage === 'idle') {
-                p2pMesh.receiveConnection(signal);
-                stopScanning();
-            }
-        } catch (err) { /* ignore noise */ }
-    };
-
-    const handleAcceptConnection = () => {
-        if (pendingOffer) {
-            try {
-                p2pMesh.receiveConnection(pendingOffer);
-                setConnectionStage('showing-answer');
-                setPendingOffer(null);
-                setShowQr(true);
-            } catch (err) {
-                alert("Failed to accept connection.");
-                setConnectionStage('idle');
-                setPendingOffer(null);
-            }
+    const stopScanning = async () => {
+        if (scannerObject) {
+            try { await scannerObject.stop(); await scannerObject.clear(); setScannerObject(null); } catch (e) { }
         }
+        setShowScanner(false);
     };
 
-    const handleDenyConnection = () => {
-        if (pendingOffer) {
-            const sigStr = JSON.stringify(pendingOffer);
-            deniedSignalsRef.current.add(sigStr);
-            setTimeout(() => deniedSignalsRef.current.delete(sigStr), 5000);
-        }
-        setPendingOffer(null);
-        setConnectionStage('idle');
-    };
+    const handleScanResult = async (decodedText: string) => {
+        if (!decodedText.startsWith('mg://')) return;
 
-    const handleInititiate = () => {
-        p2pMesh.initiateConnection();
-        setConnectionStage('showing-offer');
-        setShowQr(true);
-    };
-
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const html5QrCode = new Html5Qrcode("reader");
         try {
-            const decodedText = await html5QrCode.scanFile(file, true);
-            handleScanResult(decodedText);
+            const parts = decodedText.replace('mg://', '').split('/');
+            const peerId = parts[0];
+            setTargetPeerId(peerId);
+            setConnectionStage('bluetooth-connecting');
+            stopScanning();
+
+            // Step 1: Establish Bluetooth Connection
+            const success = await bluetoothService.scanAndConnect(peerId);
+            if (!success) {
+                setScanError('Bluetooth handshake failed. Retrying context...');
+                setConnectionStage('idle');
+                return;
+            }
+
+            // Step 2: Initiate WebRTC Handshake via Bluetooth
+            setConnectionStage('connecting-webrtc');
+            const peer = p2pMesh.initiateConnection(peerId);
+            peer.on('signal', (offer: any) => {
+                bluetoothService.sendSignal(peerId, offer);
+            });
         } catch (err) {
-            setScanError('Failed to read QR from image');
+            setScanError('Invalid Handshake Protocol');
         }
     };
 
@@ -174,24 +130,26 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         try {
             await html5QrCode.start(
                 selectedCameraId,
-                { fps: 30, qrbox: { width: 300, height: 300 }, aspectRatio: 1.0, experimentalFeatures: { useBarCodeDetectorIfSupported: true } } as any,
+                { fps: 30, qrbox: { width: 300, height: 300 }, aspectRatio: 1.0 } as any,
                 handleScanResult,
                 () => { }
             );
-        } catch (err) {
-            setScanError('Failed to start camera.');
-        }
+        } catch (err) { setScanError('Failed to start camera.'); }
     };
 
-    const stopScanning = async () => {
-        if (scannerObject) {
-            try {
-                await scannerObject.stop();
-                await scannerObject.clear();
-                setScannerObject(null);
-            } catch (err) { console.error(err); }
-        }
-        setShowScanner(false);
+    const handleInititiate = () => {
+        setShowQr(true);
+        setConnectionStage('idle');
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const html5QrCode = new Html5Qrcode("reader");
+        try {
+            const decodedText = await html5QrCode.scanFile(file, true);
+            handleScanResult(decodedText);
+        } catch (err) { setScanError('Failed to read QR photo'); }
     };
 
     const switchCamera = async () => {
@@ -205,6 +163,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
     return (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {/* Header */}
             <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-blue-500/10 rounded-xl">
@@ -218,21 +177,22 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 </div>
             </div>
 
+            {/* Link Options Card */}
             <div className="bg-slate-900/60 backdrop-blur-xl rounded-[2.5rem] border border-white/5 p-8 space-y-6 shadow-2xl relative overflow-hidden">
                 <div className="flex items-center gap-4 mb-2">
                     <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
                         <QrCode className="w-6 h-6" />
                     </div>
                     <div>
-                        <p className="font-bold text-lg text-white">Crisis Connect</p>
-                        <p className="text-sm text-slate-500 font-medium font-mono">LINK DEVICES OFFLINE</p>
+                        <p className="font-bold text-lg text-white">Crisis Connect v2</p>
+                        <p className="text-sm text-slate-500 font-medium font-mono uppercase tracking-tighter">Hybrid BLE-Mesh Handshake</p>
                     </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                     <button onClick={handleInititiate} className="flex flex-col items-center gap-3 p-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-indigo-900/20">
                         <QrCode className="w-8 h-8" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-center">My QR</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-center">Show My QR</span>
                     </button>
                     <button onClick={() => setShowScanner(true)} className="flex flex-col items-center gap-3 p-6 bg-slate-800 hover:bg-slate-700 text-white rounded-3xl transition-all active:scale-95 border border-white/5">
                         <Camera className="w-8 h-8" />
@@ -252,7 +212,7 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                                     <div key={peerId} className="flex items-center justify-between bg-slate-900/40 p-2 rounded-lg border border-white/5">
                                         <span className="font-mono text-slate-300">{peerId}</span>
                                         <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${peerId.startsWith('peer-') ? 'bg-blue-500/20 text-blue-300' : 'bg-orange-500/20 text-orange-300'}`}>
-                                            {peerId.startsWith('peer-') ? 'LAN' : 'QR'}
+                                            {peerId.startsWith('peer-') ? 'LAN' : 'BLE'}
                                         </span>
                                     </div>
                                 ))}
@@ -262,90 +222,113 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 )}
             </div>
 
-            {/* XL QR Modal */}
+            {/* Hybrid QR Modal */}
             {showQr && (
                 <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-xl z-[9999] flex items-center justify-center p-4">
-                    <div className="bg-white p-6 rounded-[3rem] space-y-6 max-w-lg w-full text-center relative overflow-hidden shadow-2xl">
-                        <button onClick={() => { setShowQr(false); setConnectionStage('idle'); }} className="absolute top-6 right-6 p-2 bg-slate-100 rounded-full text-slate-400 hover:text-slate-900 z-10">
+                    <div className="bg-white p-8 rounded-[3.5rem] space-y-6 max-w-lg w-full text-center relative overflow-hidden shadow-2xl">
+                        <button onClick={() => setShowQr(false)} className="absolute top-6 right-6 p-2 bg-slate-100 rounded-full text-slate-400 hover:text-slate-900 z-10 transition-colors">
                             <X className="w-5 h-5" />
                         </button>
 
-                        <div className="space-y-1 pt-2">
-                            <h3 className="text-slate-900 font-black text-2xl uppercase tracking-tighter">
-                                {connectionStage === 'showing-answer' ? 'Step 2: Show Back' : 'Step 1: Scan Me'}
-                            </h3>
-                            <p className="text-slate-500 text-sm font-medium">
-                                {connectionStage === 'showing-answer' ? 'Ask peer to scan this back' : 'Ask peer to scan this first'}
+                        <div className="space-y-1">
+                            <div className="flex justify-center mb-2">
+                                <div className="px-3 py-1 bg-indigo-100 text-indigo-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-indigo-200">
+                                    Ultra-Scannable v2
+                                </div>
+                            </div>
+                            <h3 className="text-slate-900 font-black text-3xl uppercase tracking-tighter">Scan to Link</h3>
+                            <p className="text-slate-500 text-sm font-medium px-4">
+                                This code only contains your identity. Secure handshake happens over Bluetooth.
                             </p>
                         </div>
 
-                        <div className="bg-white p-2 rounded-xl inline-block border-0 shadow-none">
-                            {mySignal ? (
-                                <QRCodeSVG value={mySignal} size={380} level="L" includeMargin={false} />
-                            ) : (
-                                <div className="w-[380px] h-[380px] flex items-center justify-center">
-                                    <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                                </div>
+                        <div className="bg-white p-4 rounded-[2rem] inline-block border-4 border-slate-50">
+                            {mySignal && (
+                                <QRCodeSVG
+                                    value={mySignal}
+                                    size={340}
+                                    level="M"
+                                    includeMargin={true}
+                                />
                             )}
                         </div>
 
-                        {connectionStage === 'showing-offer' && (
-                            <button onClick={() => { setShowQr(false); setShowScanner(true); }} className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl font-black uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-transform">
-                                <Camera className="w-5 h-5" />
-                                <span>Step 2: Scan Response</span>
-                            </button>
-                        )}
+                        <div className="bg-slate-50 p-4 rounded-2xl flex items-center gap-3 text-left">
+                            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
+                                <Bluetooth className="w-5 h-5 animate-pulse" />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bluetooth ID</p>
+                                <p className="text-sm font-mono font-bold text-slate-900">MeshGuard-{p2pMesh.myId.replace('peer-', '').slice(0, 10)}</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* Accept Request Modal */}
-            {connectionStage === 'pending-acceptance' && (
-                <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xl z-[9999] flex items-center justify-center p-6">
-                    <div className="bg-slate-900 border border-white/10 p-8 rounded-[2.5rem] w-full max-w-sm text-center space-y-6 shadow-2xl">
-                        <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto text-blue-400 animate-bounce">
-                            <Shield className="w-8 h-8" />
+            {/* Connection Status Overlay */}
+            {connectionStage !== 'idle' && connectionStage !== 'scanning' && (
+                <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xl z-[10000] flex items-center justify-center p-6">
+                    <div className="bg-slate-900 border border-white/10 p-10 rounded-[3rem] w-full max-w-sm text-center space-y-8 shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="relative">
+                            <div className="w-24 h-24 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto text-indigo-400">
+                                <Bluetooth className="w-10 h-10 animate-bounce" />
+                            </div>
+                            <div className="absolute inset-0 w-24 h-24 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mx-auto" />
                         </div>
-                        <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Connect Request</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <button onClick={handleDenyConnection} className="py-4 bg-slate-800 text-slate-300 rounded-2xl font-bold uppercase">Deny</button>
-                            <button onClick={handleAcceptConnection} className="py-4 bg-blue-600 text-white rounded-2xl font-black uppercase">Accept</button>
+                        <div className="space-y-3">
+                            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">
+                                {connectionStage === 'bluetooth-connecting' ? 'BLE Handshake' : 'WebRTC Tunneling'}
+                            </h3>
+                            <p className="text-slate-400 text-sm font-medium">
+                                {connectionStage === 'bluetooth-connecting'
+                                    ? `Locating MeshGuard-${targetPeerId}...`
+                                    : 'Securing P2P mesh channel...'}
+                            </p>
                         </div>
+                        <button
+                            onClick={() => setConnectionStage('idle')}
+                            className="w-full py-4 bg-slate-800 text-slate-400 rounded-2xl font-bold uppercase tracking-widest text-xs border border-white/5 active:scale-95 transition-transform"
+                        >
+                            Cancel
+                        </button>
                     </div>
                 </div>
             )}
 
             {/* Fullscreen Scanner */}
             {showScanner && (
-                <div className="fixed inset-0 bg-slate-950 z-[100] flex flex-col items-center justify-center p-6">
+                <div className="fixed inset-0 bg-slate-950 z-[100] flex flex-col items-center justify-center p-6 transition-all">
                     <div className="w-full max-w-md space-y-6">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Scan Peer...</h3>
-                            <button onClick={stopScanning} className="p-3 bg-slate-900 rounded-2xl text-slate-400 border border-white/5"><X className="w-6 h-6" /></button>
+                        <div className="flex items-center justify-between px-2">
+                            <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Locate Peer...</h3>
+                            <button onClick={stopScanning} className="p-4 bg-slate-900 rounded-[1.5rem] text-slate-400 border border-white/5 active:scale-90 transition-transform"><X className="w-6 h-6" /></button>
                         </div>
-                        <div className="relative overflow-hidden rounded-[3rem] border-4 border-indigo-500/30 aspect-square shadow-2xl bg-black">
+                        <div className="relative overflow-hidden rounded-[4rem] border-4 border-indigo-500/30 aspect-square shadow-2xl bg-black group">
                             <div id="reader" className="w-full h-full" />
+                            <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40" />
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-2 border-indigo-400/50 rounded-3xl" />
                             {isCameraBlocked && (
                                 <div className="absolute inset-0 bg-slate-900/95 flex flex-col items-center justify-center p-8 text-center space-y-4">
-                                    <p className="font-bold text-red-400">Camera Blocked</p>
+                                    <p className="font-bold text-red-400">Camera Access Required</p>
                                     <button onClick={() => { setIsCameraBlocked(false); setShowScanner(false); setTimeout(() => setShowScanner(true), 100); }} className="px-6 py-2 bg-red-500/20 text-red-400 rounded-xl border border-red-500/30">Retry</button>
                                 </div>
                             )}
                             {cameras.length > 1 && (
-                                <button onClick={switchCamera} className="absolute bottom-6 right-6 p-4 bg-black/50 backdrop-blur-md rounded-full text-white border border-white/10 shadow-xl"><Camera className="w-6 h-6" /></button>
+                                <button onClick={switchCamera} className="absolute bottom-10 right-10 p-5 bg-black/60 backdrop-blur-xl rounded-full text-white border border-white/10 shadow-2xl active:scale-90 transition-transform"><Camera className="w-6 h-6" /></button>
                             )}
                         </div>
-                        <label className="flex items-center justify-center gap-3 p-6 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest cursor-pointer active:scale-95 transition-transform shadow-xl">
+                        <label className="flex items-center justify-center gap-3 p-8 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2.5rem] font-black uppercase tracking-widest cursor-pointer active:scale-95 transition-all shadow-2xl shadow-indigo-900/40">
                             <QrCode className="w-6 h-6" />
                             <span>Upload QR Photo</span>
                             <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
                         </label>
-                        {scanError && <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl text-red-400 text-xs font-bold text-center">{scanError}</div>}
+                        {scanError && <div className="bg-red-500/10 border border-red-500/20 p-5 rounded-3xl text-red-400 text-xs font-bold text-center animate-shake">{scanError}</div>}
                     </div>
                 </div>
             )}
 
-            {/* System Info */}
+            {/* Preferences */}
             <div className="bg-slate-900/60 backdrop-blur-xl rounded-[2.5rem] border border-white/5 divide-y divide-white/5 overflow-hidden shadow-2xl">
                 <div className="p-8 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer" onClick={() => onToggleFallDetection(!fallDetectionEnabled)}>
                     <div className="flex items-center gap-4">
@@ -369,10 +352,13 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 </div>
             </div>
 
+            {/* Footer Summary */}
             <div className="bg-blue-600/10 backdrop-blur-lg p-6 rounded-[2rem] border border-blue-500/20 flex gap-4 text-sm text-blue-200/80 leading-relaxed shadow-lg">
-                <Info className="w-5 h-5 flex-shrink-0 text-blue-400 mt-1" />
+                <div className="flex-shrink-0 mt-1">
+                    <Info className="w-5 h-5 text-blue-400" />
+                </div>
                 <p className="font-medium">
-                    Mesh networking works by exchanging "signals" via QR. **Step 1:** Scan a peer's QR. **Step 2:** Let them scan your return QR. Done!
+                    This updated system uses **Hybrid Discovery**. Scan the tiny QR to find the peer, then high-speed **Web Bluetooth** secures the link and tunnels the connection.
                 </p>
             </div>
         </div>
