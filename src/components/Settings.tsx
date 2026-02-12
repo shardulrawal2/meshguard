@@ -131,21 +131,20 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
 
             if (stateRef.current === 'IDLE' || stateRef.current === 'PROCESSING_SCAN') {
                 if (signal.type !== 'offer') { setScanError('Scan Initiator Offer first'); return; }
-                addLog('Offer Received. Generating Answer...');
-
-                // CRITICAL: Set state IMMEDIATELY before starting the peer
+                addLog('Offer Received. Expansion Successful.');
                 setState('PROCESSING_SCAN');
                 setStatusMessage('Generating Response...');
                 stopScanning();
 
-                // Small delay to ensure React state reflects before potential sync callback
-                setTimeout(() => p2pMesh.receiveConnection(signal), 50);
+                setTimeout(() => {
+                    addLog('Activating Responder...');
+                    p2pMesh.receiveConnection(signal);
+                }, 50);
             } else if (stateRef.current === 'SCANNING_ANSWER' || stateRef.current === 'SHOWING_OFFER') {
-                if (signal.type !== 'answer') { setScanError('Scan Peer Response now'); return; }
-                addLog('Processing Answer...');
+                addLog('Answer Received. Completing Handshake...');
                 p2pMesh.completeHandshake(signal);
                 setState('CONNECTING');
-                setStatusMessage('Connecting...');
+                setStatusMessage('Finalizing Connection...');
                 stopScanning();
 
                 // Safety: Reset if connection takes > 15 seconds
