@@ -152,6 +152,25 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
         setShowScanner(false);
     };
 
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const html5QrCode = new Html5Qrcode("reader");
+        try {
+            const decodedText = await html5QrCode.scanFile(file, true);
+            handleScanResult(decodedText);
+        } catch (err) { setScanError('Failed to read QR photo'); }
+    };
+
+    const switchCamera = async () => {
+        if (!scannerObject || cameras.length < 2) return;
+        const currentIndex = cameras.findIndex(c => c.id === selectedCameraId);
+        const nextId = cameras[(currentIndex + 1) % cameras.length].id;
+        setSelectedCameraId(nextId);
+        await scannerObject.stop();
+        startScanning();
+    };
+
     return (
         <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-24">
             {/* Header */}
