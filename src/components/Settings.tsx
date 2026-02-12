@@ -233,6 +233,29 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 )}
             </div>
 
+            {/* Connected Nodes List (Restored for v5.1) */}
+            {peerCount > 0 && connectedPeers.length > 0 && (
+                <div className="animate-in slide-in-from-bottom-2 duration-500">
+                    <div className="bg-slate-900/40 border border-white/5 rounded-[2.5rem] p-6 space-y-4 shadow-xl">
+                        <p className="px-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Linked Identifiers</p>
+                        <div className="grid gap-2">
+                            {connectedPeers.map(id => (
+                                <div key={id} className="bg-slate-950/50 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.3)]" />
+                                        <span className="font-mono text-[9px] font-bold text-slate-300">{id}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-green-500/10 px-2 py-1 rounded-full border border-green-500/20">
+                                        <span className="text-[7px] font-black text-green-400 uppercase tracking-tighter">SECURE</span>
+                                        <CheckCircle2 className="w-2.5 h-2.5 text-green-400" />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Debug Logs */}
             <div className="bg-slate-950/80 rounded-[2rem] border border-white/5 p-6 font-mono text-[9px] space-y-2 text-slate-500 overflow-hidden">
                 <div className="flex items-center justify-between opacity-50 mb-2">
@@ -271,6 +294,9 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                                     <Camera className="w-4 h-4" /> Next Step
                                 </button>
                             ) : <div className="p-4 bg-indigo-100 text-indigo-600 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2">Ready</div>}
+                            <button onClick={handleReset} className="col-span-2 flex items-center gap-2 mx-auto text-[10px] font-black text-slate-400 uppercase tracking-widest opacity-50 hover:opacity-100 transition-all">
+                                <RotateCcw className="w-3 h-3" /> Reset Handshake
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -291,6 +317,13 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                                 <div className="absolute inset-0 border-[60px] border-black/40 pointer-events-none" />
                                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-indigo-400/20 rounded-[2rem] pointer-events-none" />
                                 <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-48 h-0.5 bg-indigo-500 shadow-[0_0_20px_rgba(79,70,229,1)] animate-sweep pointer-events-none" />
+                                {isCameraBlocked && (
+                                    <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-8 text-center space-y-4">
+                                        <AlertTriangle className="w-10 h-10 text-red-500" />
+                                        <p className="text-white font-black uppercase text-[10px] tracking-widest">Camera Access Blocked</p>
+                                        <button onClick={() => window.location.reload()} className="px-6 py-3 bg-white text-black font-black uppercase text-[9px] rounded-xl">Reload App</button>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="bg-slate-900 p-8 rounded-[3rem] border-4 border-indigo-600 space-y-6">
@@ -325,12 +358,12 @@ export const Settings: React.FC<SettingsProps> = ({ fallDetectionEnabled, onTogg
                 </div>
             </div>
 
-            <div className="p-6 bg-amber-600/5 rounded-[2.5rem] border border-amber-500/10 flex gap-4 items-start shadow-inner">
-                <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="p-6 bg-blue-600/5 rounded-[2.5rem] border border-blue-500/10 flex gap-4 items-start shadow-inner">
+                <Info className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
                 <div>
-                    <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1 leading-none">Review Mode Active</p>
-                    <p className="text-[10px] text-amber-100/40 font-medium leading-relaxed italic">
-                        "If the QR camera fails, use Manual Mode. Copy the peer code and paste it to establish an 100% offline tunnel."
+                    <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1 leading-none">Stability Protocol 5.1</p>
+                    <p className="text-[10px] text-blue-100/40 font-medium leading-relaxed italic">
+                        "If QR fails, use Manual Mode. Establish a direct 100% offline tunnel in under 5 minutes."
                     </p>
                 </div>
             </div>
