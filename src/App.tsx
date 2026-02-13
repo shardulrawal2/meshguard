@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSOS } from './hooks/useSOS';
 import { Header } from './components/Header';
 import { SosForm } from './components/SosForm';
@@ -23,6 +23,8 @@ function App() {
     }
     return () => fallDetector.stop();
   }, [fallDetectionOn, sendSOS]);
+
+  const handleActionHandled = useCallback(() => setPairingAction(null), []);
 
   return (
     <div className={`min-h-screen bg-slate-950 text-slate-50 pb-24 font-sans selection:bg-blue-500/30 transition-colors duration-1000 ${!isOnline && meshPeerCount === 0 ? 'grayscale-[0.4] brightness-75' : ''}`}>
@@ -100,7 +102,7 @@ function App() {
               onToggleFallDetection={setFallDetectionOn}
               onSendTestMessage={sendTestMessage}
               initialAction={pairingAction}
-              onActionHandled={() => setPairingAction(null)}
+              onActionHandled={handleActionHandled}
             />
           </div>
         )}

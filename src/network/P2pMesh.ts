@@ -110,26 +110,32 @@ export class P2pMesh {
         });
 
         const peerId = remotePeerId || `qr-${Math.random().toString(36).substr(2, 5)}`;
-        let gatheringTimeout: any = null;
+        console.log(`[P2pMesh] Creating ${initiator ? 'INITIATOR' : 'RESPONDER'} peer: ${peerId}`);
 
         peer.on('signal', (data: any) => {
+            console.log(`[P2pMesh] Peer signal event (${data.type})`);
             if (remotePeerId) {
                 this.broadcastChannel.postMessage({ type: 'signal', sender: this.myId, target: remotePeerId, signal: data });
             } else {
-                if (gatheringTimeout) clearTimeout(gatheringTimeout);
-                gatheringTimeout = setTimeout(() => {
-                    if (!data || !data.sdp) {
-                        console.warn('[P2pMesh] Invalid signal data received');
-                        return;
-                    }
+                console.log('[P2pMesh] Signal received. Minifying...');
+                if (!data || !data.sdp) {
+                    console.warn('[P2pMesh] Invalid signal (no SDP)');
+                    if (this.onPeerErrorCallback) this.onPeerErrorCallback('Invalid SDP data');
+                    return;
+                }
+                try {
                     const minified = this.minifySignal(data);
                     this.lastSignal = minified;
                     if (this.onSignalCallback) this.onSignalCallback(minified);
-                }, 1500); // 1.5s delay to ensure all host candidates are gathered
+                } catch (err: any) {
+                    console.error('[P2pMesh] Minify error:', err);
+                    if (this.onPeerErrorCallback) this.onPeerErrorCallback(`Protocol error: ${err.message}`);
+                }
             }
         });
 
         peer.on('connect', () => {
+            console.log('[P2pMesh] Peer connected:', peerId);
             this.peers.set(peerId, peer);
             if (!initiator && remoteSignal) this.savePeerSignal(peerId, remoteSignal);
             if (this.onPeerCountChange) this.onPeerCountChange(this.peers.size);
@@ -140,7 +146,7 @@ export class P2pMesh {
         });
 
         peer.on('error', (_err: any) => {
-            console.error('[P2pMesh] Peer error:', _err);
+            console.error('[P2pMesh] Peer error event:', _err);
             this.peers.delete(peerId);
             if (this.onPeerCountChange) this.onPeerCountChange(this.peers.size);
             if (this.onPeerErrorCallback) this.onPeerErrorCallback(_err.message || 'Peer Connection Failed');
