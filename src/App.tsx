@@ -8,7 +8,7 @@ import { fallDetector } from './ai/FallDetector';
 import { LayoutDashboard, Settings as SettingsIcon, MessageSquare, QrCode, Camera, Radio } from 'lucide-react';
 
 function App() {
-  const { messages, isOnline, sendSOS, sendTestMessage } = useSOS();
+  const { messages, isOnline, meshPeerCount, sendSOS, sendTestMessage } = useSOS();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'messages' | 'settings'>('dashboard');
   const [fallDetectionOn, setFallDetectionOn] = useState(false);
   const [pairingAction, setPairingAction] = useState<'generate' | 'scan' | null>(null);
@@ -25,16 +25,16 @@ function App() {
   }, [fallDetectionOn, sendSOS]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 pb-24 font-sans selection:bg-blue-500/30">
+    <div className={`min-h-screen bg-slate-950 text-slate-50 pb-24 font-sans selection:bg-blue-500/30 transition-colors duration-1000 ${!isOnline && meshPeerCount === 0 ? 'grayscale-[0.4] brightness-75' : ''}`}>
       {/* Dynamic Background Element */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full" />
-        <div className="absolute top-[20%] -right-[5%] w-[30%] h-[30%] bg-indigo-600/10 blur-[100px] rounded-full" />
+        <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] blur-[120px] rounded-full transition-colors duration-1000 ${meshPeerCount > 0 ? 'bg-emerald-600/20' : 'bg-blue-600/10'}`} />
+        <div className={`absolute top-[20%] -right-[5%] w-[30%] h-[30%] blur-[100px] rounded-full transition-colors duration-1000 ${meshPeerCount > 0 ? 'bg-teal-600/20' : 'bg-indigo-600/10'}`} />
       </div>
 
       <Header
         isOnline={isOnline}
-        isMeshActive={true}
+        isMeshActive={meshPeerCount > 0}
         isFallDetectionOn={fallDetectionOn}
       />
 

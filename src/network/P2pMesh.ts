@@ -172,15 +172,15 @@ export class P2pMesh {
             packed.p = getValue('a=ice-pwd:');
             packed.f = (getValue('a=fingerprint:').split(' ')[1] || '');
 
-            // Prioritize Host and IPv4 candidates
+            // Keep all host candidates to ensure connectivity across multi-homed mobile devices
             const candidates = lines.filter((l: any) => l.startsWith('a=candidate:'));
-            const prioritized = candidates
-                .filter((l: any) => l.includes('host') && l.includes('IP4'))
-                .slice(0, 5)
+            const hostCandidates = candidates
+                .filter((l: any) => l.includes('host') || l.includes('typ host'))
+                .slice(0, 6)
                 .map((l: any) => l.replace('a=candidate:', '').trim());
 
-            // Fallback to any candidates if no host IPv4 found
-            packed.c = (prioritized.length > 0 ? prioritized : candidates.slice(0, 3).map((l: any) => l.replace('a=candidate:', '').trim())).join(';');
+            // Use host candidates if available, otherwise fallback to first 4 of any type
+            packed.c = (hostCandidates.length > 0 ? hostCandidates : candidates.slice(0, 4).map((l: any) => l.replace('a=candidate:', '').trim())).join(';');
         }
         return LZString.compressToEncodedURIComponent(JSON.stringify(packed));
     }
@@ -205,13 +205,15 @@ export class P2pMesh {
                 const firstCandidate = candidates[0] || '';
                 const parts = firstCandidate.split(' ');
 
-                // Extract best IP for c= line. Use IP4 if found, default to 127.0.0.1
-                const ipVer = parts[5] === 'IP6' ? '6' : '4';
-                const cLineIp = (parts[4] && parts[4] !== '0.0.0.0') ? parts[4] : '127.0.0.1';
+                // Address is at parts[4]. Robustly determine IP family.
+                const addr = parts[4] || '';
+                const isIPv6 = addr.includes(':') || (packed.c && packed.c.includes(':'));
+                const ipVer = isIPv6 ? '6' : '4';
+                const cLineIp = (addr && addr !== '0.0.0.0') ? addr : '127.0.0.1';
 
                 const sdp = [
                     'v=0',
-                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP4 ${cLineIp}`,
+                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP${ipVer} ${cLineIp}`,
                     's=-',
                     't=0 0',
                     'a=msid-semantic: WMS',
