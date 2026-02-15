@@ -110,32 +110,26 @@ export class P2pMesh {
         });
 
         const peerId = remotePeerId || `qr-${Math.random().toString(36).substr(2, 5)}`;
-        console.log(`[P2pMesh] Creating ${initiator ? 'INITIATOR' : 'RESPONDER'} peer: ${peerId}`);
+        let gatheringTimeout: any = null;
 
         peer.on('signal', (data: any) => {
-            console.log(`[P2pMesh] Peer signal event (${data.type})`);
             if (remotePeerId) {
                 this.broadcastChannel.postMessage({ type: 'signal', sender: this.myId, target: remotePeerId, signal: data });
             } else {
-                console.log('[P2pMesh] Signal received. Minifying...');
-                if (!data || !data.sdp) {
-                    console.warn('[P2pMesh] Invalid signal (no SDP)');
-                    if (this.onPeerErrorCallback) this.onPeerErrorCallback('Invalid SDP data');
-                    return;
-                }
-                try {
+                if (gatheringTimeout) clearTimeout(gatheringTimeout);
+                gatheringTimeout = setTimeout(() => {
+                    if (!data || !data.sdp) {
+                        console.warn('[P2pMesh] Invalid signal data received');
+                        return;
+                    }
                     const minified = this.minifySignal(data);
                     this.lastSignal = minified;
                     if (this.onSignalCallback) this.onSignalCallback(minified);
-                } catch (err: any) {
-                    console.error('[P2pMesh] Minify error:', err);
-                    if (this.onPeerErrorCallback) this.onPeerErrorCallback(`Protocol error: ${err.message}`);
-                }
+                }, 1500); // 1.5s delay to ensure all host candidates are gathered
             }
         });
 
         peer.on('connect', () => {
-            console.log('[P2pMesh] Peer connected:', peerId);
             this.peers.set(peerId, peer);
             if (!initiator && remoteSignal) this.savePeerSignal(peerId, remoteSignal);
             if (this.onPeerCountChange) this.onPeerCountChange(this.peers.size);
@@ -146,7 +140,7 @@ export class P2pMesh {
         });
 
         peer.on('error', (_err: any) => {
-            console.error('[P2pMesh] Peer error event:', _err);
+            console.error('[P2pMesh] Peer error:', _err);
             this.peers.delete(peerId);
             if (this.onPeerCountChange) this.onPeerCountChange(this.peers.size);
             if (this.onPeerErrorCallback) this.onPeerErrorCallback(_err.message || 'Peer Connection Failed');
@@ -178,15 +172,15 @@ export class P2pMesh {
             packed.p = getValue('a=ice-pwd:');
             packed.f = (getValue('a=fingerprint:').split(' ')[1] || '');
 
-            // Keep all host candidates to ensure connectivity across multi-homed mobile devices
+            // Prioritize Host and IPv4 candidates
             const candidates = lines.filter((l: any) => l.startsWith('a=candidate:'));
-            const hostCandidates = candidates
-                .filter((l: any) => l.includes('host') || l.includes('typ host'))
-                .slice(0, 6)
+            const prioritized = candidates
+                .filter((l: any) => l.includes('host') && l.includes('IP4'))
+                .slice(0, 5)
                 .map((l: any) => l.replace('a=candidate:', '').trim());
 
-            // Use host candidates if available, otherwise fallback to first 4 of any type
-            packed.c = (hostCandidates.length > 0 ? hostCandidates : candidates.slice(0, 4).map((l: any) => l.replace('a=candidate:', '').trim())).join(';');
+            // Fallback to any candidates if no host IPv4 found
+            packed.c = (prioritized.length > 0 ? prioritized : candidates.slice(0, 3).map((l: any) => l.replace('a=candidate:', '').trim())).join(';');
         }
         return LZString.compressToEncodedURIComponent(JSON.stringify(packed));
     }
@@ -211,15 +205,13 @@ export class P2pMesh {
                 const firstCandidate = candidates[0] || '';
                 const parts = firstCandidate.split(' ');
 
-                // Address is at parts[4]. Robustly determine IP family.
-                const addr = parts[4] || '';
-                const isIPv6 = addr.includes(':') || (packed.c && packed.c.includes(':'));
-                const ipVer = isIPv6 ? '6' : '4';
-                const cLineIp = (addr && addr !== '0.0.0.0') ? addr : '127.0.0.1';
+                // Extract best IP for c= line. Use IP4 if found, default to 127.0.0.1
+                const ipVer = parts[5] === 'IP6' ? '6' : '4';
+                const cLineIp = (parts[4] && parts[4] !== '0.0.0.0') ? parts[4] : '127.0.0.1';
 
                 const sdp = [
                     'v=0',
-                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP${ipVer} ${cLineIp}`,
+                    `o=- ${Math.floor(Date.now() / 1000)} ${Math.floor(Date.now() / 1000)} IN IP4 ${cLineIp}`,
                     's=-',
                     't=0 0',
                     'a=msid-semantic: WMS',

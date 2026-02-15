@@ -4,19 +4,42 @@ import { Header } from './components/Header';
 import { SosForm } from './components/SosForm';
 import { MessageCard } from './components/MessageCard';
 import { Settings } from './components/Settings';
-import { fallDetector } from './ai/FallDetector';
+import { fallDetector, type FallEvent } from './ai/FallDetector';
+import { FallCountdownModal } from './components/FallCountdownModal';
+import { PanicButton } from './components/PanicButton';
+import { triggerAlertFeedback } from './utils/alertFeedback';
 import { LayoutDashboard, Settings as SettingsIcon, MessageSquare, QrCode, Camera, Radio } from 'lucide-react';
 
 function App() {
-  const { messages, isOnline, meshPeerCount, sendSOS, sendTestMessage } = useSOS();
+  const { messages, isOnline, sendSOS, sendTestMessage } = useSOS();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'messages' | 'settings'>('dashboard');
   const [fallDetectionOn, setFallDetectionOn] = useState(false);
   const [pairingAction, setPairingAction] = useState<'generate' | 'scan' | null>(null);
+  const [pendingFall, setPendingFall] = useState<FallEvent | null>(null);
+
+  const handleConfirmFall = useCallback(() => {
+    if (!pendingFall) return;
+    const { impact, severity } = pendingFall;
+    const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+
+    const message = `🚨 AUTOMATIC FALL DETECTED (${severityLabel}) - Estimated impact ${impact.toFixed(
+      1,
+    )} m/s². Assistance required at this location.`;
+
+    triggerAlertFeedback();
+    sendSOS(message, true);
+    setPendingFall(null);
+  }, [pendingFall, sendSOS]);
+
+  const handleCancelFall = useCallback(() => {
+    setPendingFall(null);
+  }, []);
 
   useEffect(() => {
     if (fallDetectionOn) {
-      fallDetector.start(() => {
-        sendSOS("🚨 AUTOMATIC FALL DETECTED - Assistance required at this location.", true);
+      fallDetector.start((event: FallEvent) => {
+        setPendingFall(event);
+        triggerAlertFeedback();
       });
     } else {
       fallDetector.stop();
@@ -24,19 +47,17 @@ function App() {
     return () => fallDetector.stop();
   }, [fallDetectionOn, sendSOS]);
 
-  const handleActionHandled = useCallback(() => setPairingAction(null), []);
-
   return (
-    <div className={`min-h-screen bg-slate-950 text-slate-50 pb-24 font-sans selection:bg-blue-500/30 transition-colors duration-1000 ${!isOnline && meshPeerCount === 0 ? 'grayscale-[0.4] brightness-75' : ''}`}>
+    <div className="min-h-screen bg-slate-950 text-slate-50 pb-24 font-sans selection:bg-blue-500/30">
       {/* Dynamic Background Element */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-        <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] blur-[120px] rounded-full transition-colors duration-1000 ${meshPeerCount > 0 ? 'bg-emerald-600/20' : 'bg-blue-600/10'}`} />
-        <div className={`absolute top-[20%] -right-[5%] w-[30%] h-[30%] blur-[100px] rounded-full transition-colors duration-1000 ${meshPeerCount > 0 ? 'bg-teal-600/20' : 'bg-indigo-600/10'}`} />
+        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full" />
+        <div className="absolute top-[20%] -right-[5%] w-[30%] h-[30%] bg-indigo-600/10 blur-[100px] rounded-full" />
       </div>
 
       <Header
         isOnline={isOnline}
-        isMeshActive={meshPeerCount > 0}
+        isMeshActive={true}
         isFallDetectionOn={fallDetectionOn}
       />
 
@@ -58,7 +79,10 @@ function App() {
                 <button onClick={() => { setActiveTab('settings'); setPairingAction('scan'); }} className="p-6 bg-slate-800 hover:bg-slate-700 text-white rounded-3xl transition-all active:scale-95 border border-white/5 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
                   <Camera className="w-5 h-5 text-slate-400" /> Scan Peer
                 </button>
-                <button onClick={sendTestMessage} className="p-6 bg-green-600 hover:bg-green-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-green-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm">
+                <button
+                  onClick={sendTestMessage}
+                  className="p-6 bg-green-600 hover:bg-green-500 text-white rounded-3xl transition-all active:scale-95 shadow-lg shadow-green-900/40 font-black uppercase tracking-widest flex items-center justify-center gap-4 text-sm"
+                >
                   <Radio className="w-5 h-5" /> Test Message
                 </button>
               </div>
@@ -102,7 +126,7 @@ function App() {
               onToggleFallDetection={setFallDetectionOn}
               onSendTestMessage={sendTestMessage}
               initialAction={pairingAction}
-              onActionHandled={handleActionHandled}
+              onActionHandled={() => setPairingAction(null)}
             />
           </div>
         )}
@@ -138,6 +162,27 @@ function App() {
           <span className="text-[10px] font-bold uppercase tracking-wider">Settings</span>
         </button>
       </nav>
+
+      {/* Fall detection countdown */}
+      {pendingFall && (
+        <FallCountdownModal
+          seconds={5}
+          severity={pendingFall.severity}
+          impact={pendingFall.impact}
+          onCancel={handleCancelFall}
+          onConfirm={handleConfirmFall}
+        />
+      )}
+
+      {/* Floating panic button */}
+      <div className="fixed bottom-28 right-6 z-40">
+        <PanicButton
+          onConfirm={() => {
+            triggerAlertFeedback();
+            sendSOS('🚨 PANIC BUTTON ACTIVATED - Immediate assistance requested.', false);
+          }}
+        />
+      </div>
     </div>
   );
 }

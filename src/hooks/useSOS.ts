@@ -6,7 +6,6 @@ import { p2pMesh } from '../network/P2pMesh';
 export const useSOS = () => {
     const [messages, setMessages] = useState<SOSMessage[]>([]);
     const [isOnline, setIsOnline] = useState(navigator.onLine);
-    const [meshPeerCount, setMeshPeerCount] = useState(p2pMesh.getPeerCount());
 
     useEffect(() => {
         const loadMessages = async () => {
@@ -21,9 +20,6 @@ export const useSOS = () => {
             setMessages(prev => [msg, ...prev]);
         });
 
-        p2pMesh.onPeerCountChanged((count) => {
-            setMeshPeerCount(count);
-        });
 
         const handleStatus = () => setIsOnline(navigator.onLine);
         window.addEventListener('online', handleStatus);
@@ -88,15 +84,15 @@ export const useSOS = () => {
 
         await offlineStorage.saveMessage(testMessage);
         setMessages(prev => [testMessage, ...prev]);
-
+        
         const peerCount = p2pMesh.getPeerCount();
         if (peerCount > 0) {
             console.log(`[useSOS] Test message broadcasting to ${peerCount} peers`);
             p2pMesh.broadcast(testMessage);
         }
-
+        
         return testMessage;
     };
 
-    return { messages, isOnline, meshPeerCount, sendSOS, sendTestMessage };
+    return { messages, isOnline, sendSOS, sendTestMessage };
 };

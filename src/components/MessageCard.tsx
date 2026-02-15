@@ -8,23 +8,47 @@ interface MessageCardProps {
 
 export const MessageCard: React.FC<MessageCardProps> = ({ message }) => {
     const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const isPanic = message.isPanic === true;
+    const isAuto = message.isAutoTriggered;
+
+    const containerClasses = isPanic
+        ? 'border-orange-500/40 bg-orange-500/5'
+        : isAuto
+            ? 'border-red-500/30 bg-red-500/5'
+            : 'border-white/5 bg-slate-900/40';
 
     return (
-        <div className={`p-6 rounded-[2rem] border transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${message.isAutoTriggered
-            ? 'border-red-500/30 bg-red-500/5 backdrop-blur-lg'
-            : 'border-white/5 bg-slate-900/40 backdrop-blur-lg'
-            } space-y-4 shadow-xl`}>
+        <div
+            className={`p-6 rounded-[2rem] border transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${containerClasses} backdrop-blur-lg space-y-4 shadow-xl`}
+        >
             <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-xl ${message.isAutoTriggered ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                        {message.isAutoTriggered ? <AlertCircle className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
+                    <div
+                        className={`p-2 rounded-xl ${
+                            isPanic
+                                ? 'bg-orange-500/20 text-orange-300'
+                                : isAuto
+                                ? 'bg-red-500/20 text-red-400'
+                                : 'bg-blue-500/10 text-blue-400'
+                        }`}
+                    >
+                        {isAuto || isPanic ? (
+                            <AlertCircle className="w-4 h-4" />
+                        ) : (
+                            <Shield className="w-4 h-4" />
+                        )}
                     </div>
                     <div>
                         <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
                             <Clock className="w-3 h-3" />
                             {time}
                         </div>
-                        {message.isAutoTriggered && (
+                        {isPanic && (
+                            <span className="text-[10px] font-bold text-orange-400 uppercase tracking-wider">
+                                Panic Alert
+                            </span>
+                        )}
+                        {!isPanic && isAuto && (
                             <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">
                                 Fall Intelligence Trigger
                             </span>
